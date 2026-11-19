@@ -362,9 +362,19 @@ func TestProvisioningPostgres(t *testing.T) {
 		&http.Cookie{Name: platformCookie, Value: tenantSession.Value}), 401)
 	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", tenant), appOrigin, "", nil,
 		&http.Cookie{Name: tenantCookie, Value: adminSession.Value}), 401)
-	t.Run("reauthentication rotates only the matching scope", func(t *testing.T) {
+	t.Run("reauthentication rotates only the presented session", func(t *testing.T) {
 		appSession := "/api/v1/app/tenants/" + tenant + "/session"
-		callback, browser := oidcStart(login, appOrigin, nil, "owner", "signature")
+		// A separate browser signs in to the same tenant as the same Owner.
+		callback, browser := oidcStart(login, appOrigin, nil, "owner", "")
+		otherLogin := request("GET", callback, "", "", nil, browser)
+		check(otherLogin, 204)
+		otherBrowser := otherLogin.Result().Cookies()[1]
+		if otherBrowser.Value == tenantSession.Value {
+			t.Fatal("separate sign-ins did not issue distinct sessions")
+		}
+		check(request("GET", appSession, appOrigin, "", nil, otherBrowser), 200)
+
+		callback, browser = oidcStart(login, appOrigin, nil, "owner", "signature")
 		check(request("GET", callback, "", "", nil, browser, tenantSession), 401)
 		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
 
@@ -375,6 +385,7 @@ func TestProvisioningPostgres(t *testing.T) {
 		tenantSession = w.Result().Cookies()[1]
 		check(request("GET", appSession, appOrigin, "", nil, previousTenant), 401)
 		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
+		check(request("GET", appSession, appOrigin, "", nil, otherBrowser), 200)
 		check(request("POST", create, adminOrigin, "first-create-key", input, adminSession), 201)
 
 		callback, browser = oidcStart("/api/v1/admin/login", adminOrigin, nil, "admin", "")

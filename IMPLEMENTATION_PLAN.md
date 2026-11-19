@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
+**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. Kontrak RBAC Tenant menunggu review RB1–RB6 pada Issue #4. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
 
 ## Audit dan exit Phase 00
 
@@ -104,6 +104,15 @@ Audit Draft PR #3 pada baseline `9b37f2c28896543abff7b2e1736b0cacd8b59dc2` menem
 **OPEN-015 · NOT VERIFIED.** Pemeriksaan hanya membaca nama konfigurasi. Tidak ditemukan environment `HIVE_*` pada proses kerja, metadata konfigurasi GitHub, unit Hi-Ve/container berjalan, atau file konfigurasi target di checkout. Ini tidak membuktikan ketiadaan konfigurasi di host lain. Google, SMTP dan browser target masih memerlukan environment yang diotorisasi. Suite lokal memakai provider OIDC bertanda tangan dan delivery fixture.
 
 **Gate lokal PASS.** Format, vet, build, race test, dependency guard, actionlint, migrasi fresh/retry/upgrade/rollback dan acceptance provisioning pada PostgreSQL disposable lulus. Tes tambahan mencakup invalid proof yang mempertahankan sesi sebelumnya, rotasi dua konteks, expiry dan cleanup berulang, serta upgrade 004→005 dengan sesi aktif yang tetap utuh.
+
+## Increment 02.4 · Review kontrak RBAC Tenant
+
+- **Baseline audit:** `a82696dd3e780cbe6c1493406c945c0e7f1d58c8` di `feat/phase-02-platform`, Draft PR #3. Provisioning D1–D5 dan migrasi 001–005 tetap berlaku. Identity menyimpan membership aktif per tenant dan grant aksi Platform untuk provisioning. Belum ada custom role tenant, grant lokasi, entitlement enforcement, atau evaluasi feature flag. [CI baseline](https://github.com/PTKPP/hi-ve/actions/runs/44526399290)
+- **Jejak FR/AC:** FR-AUTH-01 dan FR-HV-IDN-001/AC-01–03 mendukung login dan sesi terpisah. FR-HV-IDN-001/AC-04 didukung sebagian oleh rotasi sesi login ulang. FR-AUTH-03/AC-01–04/06, FR-HV-ACL-001/AC-01–03 dan FR-LOC-02/AC-01–03 memerlukan kontrak grant, membership, dan lokasi. FR-HV-ENT-001/AC-01–04 masih memerlukan slice Platform dengan grant/revoke dan waktu efektif yang independen dari RBAC dan rollout.
+- **Bukti sesi lokal:** Dua browser masuk sebagai Owner yang sama pada satu tenant. Login ulang browser pertama mencabut hanya cookie lama yang disajikan. Sesi baru dan cookie browser kedua tetap dapat digunakan. Bila token lama dibagikan antardevice, pencabutan digest tersebut berlaku bagi semua pemegang token itu. Tidak ada perubahan semantik rotasi atau perilaku provisioning.
+- **Proposal untuk persetujuan:** RB1–RB6 mencakup mutasi role/grant oleh Primary Owner, action allowlist, scope lokasi eksplisit, tiga pemeriksaan akses yang terpisah, dan penegakan grant terbaru tanpa cache. Usulan constraint tenant-composite, revision check, lock policy Identity, idempotensi dan audit atomik disertai acceptance positif/negatif. OPEN-011/016 tetap terbuka untuk RBAC dan bagian lain di luar provisioning. [Decision matrix Issue #4](https://github.com/PTKPP/hi-ve/issues/4)
+- **Next action:** Review kontrak tenant-wide role dan assignment terlebih dahulu. Lokasi operasional menunggu kontrak Locations dan resource riil. Entitlement menunggu kontrak sendiri dan OPEN-008/010. OPEN-003, OPEN-004, OPEN-006 dan OPEN-015 tetap mengikuti scope masing-masing. Endpoint, skema, dan perubahan semantik sesi RBAC baru dapat diteruskan setelah approval.
+- **Gate lokal PASS:** gofmt, vet, race test, build, architecture guard, actionlint, migrasi fresh/upgrade/retry/rollback pada PostgreSQL disposable, dan acceptance dua browser.
 
 ## Riwayat checkpoint
 
