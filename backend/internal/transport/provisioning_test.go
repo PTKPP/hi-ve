@@ -134,7 +134,8 @@ func TestGoogleProof(t *testing.T) {
 	}
 }
 
-func TestProvisioningPostgres(t *testing.T) {
+func disposableDatabase(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv("HIVE_DISPOSABLE_TEST_DATABASE")
 	if dsn == "" {
 		t.Skip("run scripts/test-migrations.sh for PostgreSQL integration")
@@ -147,11 +148,17 @@ func TestProvisioningPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(db.Close)
 	var disposable bool
 	if err = db.QueryRow(t.Context(), `SELECT to_regclass('public.hive_disposable_test') IS NOT NULL`).Scan(&disposable); err != nil || !disposable {
 		t.Fatal("disposable integration marker missing")
 	}
+	return db
+}
+
+func TestProvisioningPostgres(t *testing.T) {
+	db := disposableDatabase(t)
+	var err error
 	exec := func(sql string, args ...any) {
 		t.Helper()
 		if _, err := db.Exec(t.Context(), sql, args...); err != nil {

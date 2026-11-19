@@ -60,15 +60,15 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 5 {
-		return errors.New("provisioning migrations are required")
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 7 {
+		return errors.New("required backend migrations are missing")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
 	if err != nil {
 		return errors.New("Google OIDC discovery unavailable")
 	}
 	api := transport.API{Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
-		Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
+		TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8080"

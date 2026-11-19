@@ -6,7 +6,7 @@ This backend slice implements the approved D1–D5 contract. The issue records t
 
 Run the migration checks on disposable PostgreSQL with the command in [DATABASE.md](DATABASE.md). The script also runs the HTTP provisioning acceptance tests against its temporary database and a local provider with signed OIDC fixtures.
 
-The Go command is `go run ./cmd/api` from `backend/`. Apply migrations 001–005 to the authorized development/test target first. Configure the following outside the repository.
+The Go command is `go run ./cmd/api` from `backend/`. Apply the repository migrations through 007 to the authorized development/test target first. Configure the following outside the repository.
 
 | Environment | Purpose |
 | --- | --- |

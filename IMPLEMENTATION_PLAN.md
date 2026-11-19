@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. Kontrak RBAC Tenant menunggu review RB1–RB6 pada Issue #4. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
+**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. RBAC tenant-wide RB1–RB6 disetujui dan diimplementasikan. Location scope, entitlement, dan lifecycle membership menunggu kontrak masing-masing. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
 
 ## Audit dan exit Phase 00
 
@@ -113,6 +113,19 @@ Audit Draft PR #3 pada baseline `9b37f2c28896543abff7b2e1736b0cacd8b59dc2` menem
 - **Proposal untuk persetujuan:** RB1–RB6 mencakup mutasi role/grant oleh Primary Owner, action allowlist, scope lokasi eksplisit, tiga pemeriksaan akses yang terpisah, dan penegakan grant terbaru tanpa cache. Usulan constraint tenant-composite, revision check, lock policy Identity, idempotensi dan audit atomik disertai acceptance positif/negatif. OPEN-011/016 tetap terbuka untuk RBAC dan bagian lain di luar provisioning. [Decision matrix Issue #4](https://github.com/PTKPP/hi-ve/issues/4)
 - **Next action:** Review kontrak tenant-wide role dan assignment terlebih dahulu. Lokasi operasional menunggu kontrak Locations dan resource riil. Entitlement menunggu kontrak sendiri dan OPEN-008/010. OPEN-003, OPEN-004, OPEN-006 dan OPEN-015 tetap mengikuti scope masing-masing. Endpoint, skema, dan perubahan semantik sesi RBAC baru dapat diteruskan setelah approval.
 - **Gate lokal PASS:** gofmt, vet, race test, build, architecture guard, actionlint, migrasi fresh/upgrade/retry/rollback pada PostgreSQL disposable, dan acceptance dua browser.
+
+## Increment 02.5 · RBAC tenant-wide
+
+**Keputusan APPROVED untuk slice ini.** RB1–RB4 dan RB6 mencakup API list/create/replace role dan replace assignment untuk membership aktif. RB5 memakai optimistic revision pada mutasi RBAC dan scoped lock pada sesi/membership yang perlu dilindungi. Tidak ada lock policy tenant sepanjang transaksi bisnis umum. Deaktivasi/reaktivasi menunggu persetujuan. Workflow deaktivasi yang kelak disetujui wajib mencabut semua sesi membership secara atomik. OPEN-011/016 lain tetap mengikuti review masing-masing. [Persetujuan Issue #4](https://github.com/PTKPP/hi-ve/issues/4#issuecomment-7010571295)
+
+| Area | Coverage dan bukti |
+|---|---|
+| Role dan assignment | Owner tenant dapat list/create/replace role dan mengganti assignment anggota aktif di tenant sendiri. Anggota dengan `identity.roles.read` bisa melihat definisi role. Default deny berlaku untuk non-Owner pada mutasi. Primary Owner tidak bisa menjadi sasaran assignment umum. Scope parsial FR-AUTH-03/AC-01–04/06 dan FR-HV-ACL-001/AC-01/03. |
+| Isolasi dan live access | Tenant dan Platform memakai sesi terpisah. FK composite menolak referensi role lintas tenant. Role dan assignment diperiksa dari PostgreSQL per request tanpa snapshot grant dalam sesi. Tes menolak staf tanpa izin, anggota nonaktif, sesi Platform, tenant lain, aksi wildcard dan aksi di luar allowlist. Pencabutan role action maupun assignment berlaku pada request berikutnya dengan cookie yang sama. |
+| Konkurensi, retry dan audit | Dua create paralel dengan key yang sama menghasilkan satu role. Dua replace paralel dengan revision sama menghasilkan satu sukses dan satu 409. Audit before/after dari domain Audit, revision dan mutation commit atomik. Tes injeksi audit gagal membuktikan rollback role, revision, dan create receipt. |
+| Migrasi | Aditif 006–007 dengan lock timeout 5 detik dan tanpa default grant. PostgreSQL disposable menguji upgrade 005→007 yang mempertahankan sesi aktif. Provisioning dan rotasi sesi tetap lulus. [Kontrak backend](backend/docs/TENANT_RBAC.md) |
+| Sisa Phase 02 | Scope lokasi menunggu kontrak Locations dan resource otoritatif. Entitlement dan rollout tetap terpisah. Lifecycle membership, akses sensitif, staf/device, settings dan perluasan audit membutuhkan kontrak masing-masing. OPEN-015 tetap tanpa verifikasi target yang tersedia. |
+| Gate lokal | PASS untuk gofmt, go vet, race test, build, architecture guard, actionlint, migrasi baru/retry/upgrade/rollback, dan HTTP integration provisioning/RBAC. |
 
 ## Riwayat checkpoint
 

@@ -24,6 +24,7 @@ awk '
         $2 ~ /^hi-ve\/backend\/internal\/(identity|platform\/provisioning)$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
+    $1 == "hi-ve/backend/internal/identity" && $2 == "hi-ve/backend/internal/audit" { next }
     { print "Unexpected module dependency:", $1, "->", $2 > "/dev/stderr"; failed=1 }
     END { exit failed }
 '

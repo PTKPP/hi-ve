@@ -102,11 +102,19 @@ sql hive_sessions_upgrade "WITH principal AS (
     INSERT INTO hive.platform_principals (principal_id) SELECT id FROM principal RETURNING principal_id
 ) INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
   SELECT decode(repeat('a5',32),'hex'),principal_id,statement_timestamp()+interval '1 hour' FROM admin"
+cp migrations/005_identity_session_expiry.sql "$scratch/provisioning_baseline/"
+migrate hive_sessions_upgrade "$scratch/provisioning_baseline"
+expect_sql hive_sessions_upgrade "$version" 5
+session_query="SELECT count(*) FROM hive.platform_sessions WHERE digest=decode(repeat('a5',32),'hex') AND expires_at>statement_timestamp()"
+expect_sql hive_sessions_upgrade "$session_query" 1
+printf 'PASS: session expiry migration preserves active sessions from version 004\n'
 migrate hive_sessions_upgrade migrations
 expect_sql hive_sessions_upgrade "$version" "$latest"
-expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.platform_sessions WHERE digest=decode(repeat('a5',32),'hex') AND expires_at>statement_timestamp()" 1
-printf 'PASS: session expiry migration preserves active sessions from version 004\n'
+expect_sql hive_sessions_upgrade "$session_query" 1
+expect_sql hive_sessions_upgrade 'SELECT count(*) FROM hive.tenant_roles' 0
+expect_sql hive_sessions_upgrade 'SELECT count(*) FROM hive.tenant_rbac_audit' 0
+printf 'PASS: RBAC schema upgrade preserves sessions and starts without default grants\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^TestProvisioningPostgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC)Postgres$'
