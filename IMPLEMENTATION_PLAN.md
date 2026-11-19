@@ -1,11 +1,11 @@
 # Hi-Ve · Execution tracker Phase 00–08
 
-Checkpoint 19 November 2026, Asia/Jakarta. Commit baseline `853d6eff084adc8e42b7198a188e134f38da8220` di `main` dan `origin/main`. Foundation dikerjakan pada branch `feat/phase-01-foundation`. SHA dan run verifikasi dicatat setelah push.
+Checkpoint 19 November 2026, Asia/Jakarta. Commit baseline `853d6eff084adc8e42b7198a188e134f38da8220` di `main` dan `origin/main`. Foundation dikerjakan pada branch `feat/phase-01-foundation`. Commit foundation yang diuji adalah `56e5c30bf7fb36ed7a12f3fb328e9cf257ebc2ec`. [Draft PR #1](https://github.com/PTKPP/hi-ve/pull/1)
 Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. PRD v04 menetapkan keputusan produk. Exit berlaku per fase, sedangkan kelulusan pilot menggunakan PRD §08.4. Checkpoint disimpan di working tree.
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 berjalan, seluruh gate lokal PASS · Phase 02–08 belum dimulai.** Registry P0, migrasi baseline PostgreSQL, pengujian disposable, dan guard batas paket sudah terverifikasi lokal. Exit Phase 01 menunggu eksekusi sukses GitHub Actions pada commit yang memuat foundation. [Workflow Backend](.github/workflows/backend.yml) Sebelum provisioning di Phase 02, Product Owner, Engineering dan QA juga perlu mereview kontrak dan AC terkait OPEN-011/016.
+**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 BLOCKED pada entry · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Review awal Phase 02 selesai dan persetujuan kontrak provisioning dicatat sebagai blocker. [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
 
 ## Audit dan exit Phase 00
 
@@ -24,8 +24,8 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | Phase / status | Lingkup dan dependency / entry | Exit yang diperiksa | Next action |
 |---|---|---|---|
 | 00 · PASS | Audit baseline, baca dokumen wajib, identifikasi supersession, desain urutan dan verifikasi prasyarat engineering | Lima gate audit di atas lulus | Entry 01 telah diverifikasi |
-| 01 · BERJALAN | Fondasi Go, registry canonical, migrasi PostgreSQL, integration environment disposable, dan batas paket. Entry 00 PASS, toolchain tersedia, ID lengkap dan stabil (CAP-01–05/18/23/47) | Build dan regresi registry lulus, batas dependensi teruji, migrasi lulus pada database baru dan upgrade dari baseline termasuk retry, concurrency dan rollback. Workflow aktual lulus pada commit foundation | Catat URL run dan SHA revisi setelah perubahan dikirim dengan otorisasi Git |
-| 02 · MENUNGGU 01 | Platform, Identity, Devices, Settings, Audit online. Entry 01 PASS dan review FR/AC serta kontrak untuk slice provisioning (OPEN-011/016). OPEN per fitur tetap berlaku | PostgreSQL disposable, kompatibilitas migrasi, provisioning/linking Google, isolasi Admin/App dan tenant, hak per field, revoke, pairing, konteks outlet/operator, histori login 7 hari, audit. Buktikan lewat API dan DB termasuk kasus negatif | Review FR-AUTH-01 dan FR-HV-PLT-001 bersama Product Owner, Engineering dan QA. Rinci recovery, expiry dan retensi sebelum menutup fitur terkait |
+| 01 · COMPLETED | Fondasi Go, registry canonical, migrasi PostgreSQL, integration environment disposable, dan batas paket. Entry 00 PASS, toolchain tersedia, ID lengkap dan stabil (CAP-01–05/18/23/47) | Build dan regresi registry lulus, batas dependensi teruji, migrasi lulus pada database baru dan upgrade dari baseline termasuk retry, concurrency dan rollback. Workflow aktual lulus pada commit foundation | Serahkan foundation untuk review melalui draft PR #1 |
+| 02 · BLOCKED | Platform, Identity, Devices, Settings, Audit online. Entry 01 PASS dan review FR/AC serta kontrak untuk slice provisioning (OPEN-011/016). OPEN per fitur tetap berlaku | PostgreSQL disposable, kompatibilitas migrasi, provisioning/linking Google, isolasi Admin/App dan tenant, hak per field, revoke, pairing, konteks outlet/operator, histori login 7 hari, audit. Buktikan lewat API dan DB termasuk kasus negatif | Selesaikan keputusan provisioning dan review AC di issue #2, lalu mulai implementasi pada feature branch Phase 02 |
 | 03 · MENUNGGU 02 | Catalog, Locations, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | Turunkan kasus FR-PRD-01–04 dan FR-LOC-01–02 ke fixture dua tenant |
 | 04 · MENUNGGU 03 | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | Rancang kontrak Inventory dan fixture stok terakhir. Review OPEN-003 dan detail packaging/costing yang terdampak |
 | 05 · MENUNGGU 04 | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | Telusuri FR-POS/RET dan FR-HV-RCP-001, tes dua checkout berebut stok terakhir |
@@ -59,8 +59,17 @@ Gate lokal dijalankan pada Linux amd64, Go 1.26.5, dari `backend/`. Source baru 
 | Toolchain | `gofmt -l .` bersih, `go vet ./...`, `go test -race -count=1 ./...` dan `go build ./...` sukses. `go list` mengonfirmasi satu paket produksi. | PASS lokal |
 | Boundary | `bash scripts/check-architecture.sh` memeriksa dependensi produksi Platform yang sekarang hanya standard library. Pada salinan sementara, import lintas-domain dari registry ditolak oleh guard, dan akses paket privat domain lain ditolak oleh Go. Build Go memeriksa siklus. | PASS |
 | PostgreSQL | `bash scripts/test-migrations.sh` memakai Docker lokal, PostgreSQL 18.7 yang dipin oleh digest dan Tern v2.4.3. Versi 001 terpasang pada DB kosong dan retry tidak mengubah versi. Dua proses migrasi menerapkan upgrade aditif dari 001 pada fixture, mempertahankan data lama, dan mencapai satu versi akhir. Migrasi yang sengaja gagal membatalkan DDL dan mempertahankan versi. | PASS lokal |
-| Workflow | `actionlint` v1.7.7 lulus. Semua langkah verifikasi dijalankan lokal. GitHub dapat dibaca melalui `gh`, tetapi pencarian untuk SHA baseline tidak menemukan run. Working tree yang memuat foundation belum memiliki SHA commit atau run. | PASS lint dan lokal · GitHub Actions NOT VERIFIED |
-| Exit | Rekam SHA dan run GitHub Actions sukses pada revisi yang memuat perubahan. Pengguna telah mengotorisasi commit dan push pada feature branch. | PENDING CI · Phase 02 menunggu |
+| Workflow | `actionlint` v1.7.7 lulus. Semua langkah verifikasi dijalankan lokal. Run push `44514611278` mengembalikan `completed/success` pada SHA `56e5c30bf7fb36ed7a12f3fb328e9cf257ebc2ec`, termasuk langkah Test PostgreSQL migrations. | PASS lint, lokal dan GitHub Actions |
+| Exit | Semua gate lokal lulus, commit foundation tersedia di feature branch, dan run pada SHA tersebut sukses. | PASS |
+
+## Review entry Phase 02
+
+| Area | Baseline dan hasil review |
+|---|---|
+| Aturan approved | CAP-14/15/22/24/28/29/33/40 menetapkan provisioning oleh Superadmin, sesi Platform dan tenant terpisah, tepat satu Primary Owner aktif per tenant, login Google langsung dan lifecycle tenant. Platform memiliki workflow tenancy, Identity memiliki linking dan sesi, Audit memiliki rekaman audit. |
+| OPEN-011 · kontrak | Tetapkan izin aksi dan bentuk request/result/error provisioning. Review state awal tenant dan Owner, bukti untuk mengaitkan Owner ke Google issuer/subject, penanganan identitas duplikat, serta atomicity dan retry tenant, Owner dan audit. Keputusan ini menentukan API dan constraint skema. |
+| OPEN-016 · acceptance | Review FR-HV-PLT-001/AC-01–02, FR-AUTH-01/AC-04–05, dan FR-HV-IDN-001/AC-01–03. UAT-HV-01 mencakup penolakan login dan isolasi konteks. Usulan tambahan menguji provisioning sukses, aktor tanpa izin, duplikasi/retry dan rollback tanpa tenant/Owner setengah jadi. |
+| Dampak dan rekomendasi | Prioritaskan slice tenant dan Primary Owner. Implementasi endpoint dan migrasi tabel bisnis menunggu keputusan slice tersebut. Tangani OPEN-004 untuk recovery, OPEN-007/008 untuk transaksi offline, dan OPEN-015 untuk OIDC di lingkungan target pada lingkup masing-masing. [Issue #2](https://github.com/PTKPP/hi-ve/issues/2) |
 
 ## Riwayat checkpoint
 
@@ -71,3 +80,5 @@ Gate lokal dijalankan pada Linux amd64, Go 1.26.5, dari `backend/`. Source baru 
 | 01.1 | Modul Go dan registry P0 diimplementasikan. Perbandingan dengan PRD dan tes negatif PASS. |
 | 01.2 | Gate lokal dan uji mutasi pada salinan disposable PASS. Workflow tersimpan. Untuk melanjutkan, verifikasi hasil CI pada SHA yang dikirim, lalu periksa entry provisioning. UAT dan kesiapan pilot masih NOT VERIFIED. |
 | 01.3 | Audit ulang exit gate menambahkan PostgreSQL disposable, baseline 001 dan guard architecture. Go, actionlint, pengujian boundary negatif, fresh apply, retry, upgrade konkuren, dan rollback DDL PASS. GitHub Actions menunggu SHA dan run aktual yang memuat foundation. |
+| 01.4 | Foundation dipush ke `feat/phase-01-foundation` pada `56e5c30bf7fb36ed7a12f3fb328e9cf257ebc2ec`. Run `44514611278` PASS. Draft PR #1 terbuka. Phase 01 COMPLETED. |
+| 02.entry | Review kontrak dan AC awal selesai. Issue #2 melacak keputusan yang memblokir implementasi provisioning. |
