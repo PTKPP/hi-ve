@@ -60,7 +60,7 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 4 {
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 5 {
 		return errors.New("provisioning migrations are required")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
@@ -92,8 +92,8 @@ func run(ctx context.Context) error {
 			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
-				if err := store.RemoveExpiredFlows(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
-					slog.Warn("expired OIDC flow cleanup failed")
+				if err := store.RemoveExpiredAuthState(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
+					slog.Warn("expired authentication state cleanup failed")
 				}
 			}
 		}

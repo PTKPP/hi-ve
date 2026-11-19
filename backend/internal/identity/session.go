@@ -44,19 +44,37 @@ func (s Store) TakeFlow(ctx context.Context, state, browser string) (Flow, error
 	return f, err
 }
 
-func (s Store) StartSession(ctx context.Context, proof GoogleIdentity, tenant, secret string, expires time.Time) error {
+// StartSession replaces the browser's previous session in the same context after a valid login.
+func (s Store) StartSession(ctx context.Context, proof GoogleIdentity, tenant, secret, previous string, expires time.Time) error {
 	if !proof.valid() {
 		return ErrInvalidProof
 	}
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := insertSession(ctx, tx, proof, tenant, secret, expires); err != nil {
+			return err
+		}
+		if previous == "" || previous == secret {
+			return nil
+		}
+		if tenant == "" {
+			_, err := tx.Exec(ctx, `DELETE FROM hive.platform_sessions WHERE digest=$1`, Digest(previous))
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM hive.tenant_sessions WHERE digest=$1 AND tenant_id=$2`, Digest(previous), tenant)
+		return err
+	})
+}
+
+func insertSession(ctx context.Context, tx pgx.Tx, proof GoogleIdentity, tenant, secret string, expires time.Time) error {
 	var result string
 	var err error
 	if tenant == "" {
-		err = s.DB.QueryRow(ctx, `INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
+		err = tx.QueryRow(ctx, `INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
 			SELECT $1,p.id,$4 FROM hive.google_principals p JOIN hive.platform_principals a ON a.principal_id=p.id
 			WHERE p.issuer=$2 AND p.subject=$3 AND a.active RETURNING principal_id`,
 			Digest(secret), proof.issuer, proof.subject, expires).Scan(&result)
 	} else {
-		err = s.DB.QueryRow(ctx, `INSERT INTO hive.tenant_sessions (digest,tenant_id,principal_id,expires_at)
+		err = tx.QueryRow(ctx, `INSERT INTO hive.tenant_sessions (digest,tenant_id,principal_id,expires_at)
 			SELECT $1,m.tenant_id,p.id,$4 FROM hive.google_principals p
 			JOIN hive.tenant_memberships m ON m.principal_id=p.id JOIN hive.active_tenants t ON t.id=m.tenant_id
 			WHERE p.issuer=$2 AND p.subject=$3 AND m.active AND t.id=$5 RETURNING principal_id`,
@@ -100,12 +118,24 @@ func (s Store) TenantPrincipal(ctx context.Context, secret, tenant string) (stri
 	return id, err
 }
 
-// RemoveExpiredFlows discards short-lived PKCE and nonce material from abandoned browser flows.
-func (s Store) RemoveExpiredFlows(ctx context.Context) error {
+// RemoveExpiredAuthState removes a bounded batch from each Identity-owned auth table.
+func (s Store) RemoveExpiredAuthState(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_, err := s.DB.Exec(ctx, `DELETE FROM hive.oidc_flows WHERE state_digest IN
-		(SELECT state_digest FROM hive.oidc_flows WHERE expires_at <= clock_timestamp()
-		 ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`)
+	_, err := s.DB.Exec(ctx, `WITH expired_flows AS (
+		DELETE FROM hive.oidc_flows WHERE state_digest IN (
+			SELECT state_digest FROM hive.oidc_flows WHERE expires_at <= statement_timestamp()
+			ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+		)
+	), expired_platform AS (
+		DELETE FROM hive.platform_sessions WHERE digest IN (
+			SELECT digest FROM hive.platform_sessions WHERE expires_at <= statement_timestamp()
+			ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+		)
+	)
+	DELETE FROM hive.tenant_sessions WHERE digest IN (
+		SELECT digest FROM hive.tenant_sessions WHERE expires_at <= statement_timestamp()
+		ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED
+	)`)
 	return err
 }

@@ -175,7 +175,7 @@ func TestProvisioningPostgres(t *testing.T) {
 			delivery = d
 			return nil
 		}}.Handler()
-	request := func(method, path, origin, key string, body any, c *http.Cookie) *httptest.ResponseRecorder {
+	request := func(method, path, origin, key string, body any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 		var r io.Reader
 		if body != nil {
 			data, _ := json.Marshal(body)
@@ -184,8 +184,10 @@ func TestProvisioningPostgres(t *testing.T) {
 		req := httptest.NewRequest(method, path, r)
 		req.Header.Set("Origin", origin)
 		req.Header.Set("Idempotency-Key", key)
-		if c != nil {
-			req.AddCookie(c)
+		for _, c := range cookies {
+			if c != nil {
+				req.AddCookie(c)
+			}
 		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -360,6 +362,59 @@ func TestProvisioningPostgres(t *testing.T) {
 		&http.Cookie{Name: platformCookie, Value: tenantSession.Value}), 401)
 	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", tenant), appOrigin, "", nil,
 		&http.Cookie{Name: tenantCookie, Value: adminSession.Value}), 401)
+	t.Run("reauthentication rotates only the matching scope", func(t *testing.T) {
+		appSession := "/api/v1/app/tenants/" + tenant + "/session"
+		callback, browser := oidcStart(login, appOrigin, nil, "owner", "signature")
+		check(request("GET", callback, "", "", nil, browser, tenantSession), 401)
+		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
+
+		callback, browser = oidcStart(login, appOrigin, nil, "owner", "")
+		w := request("GET", callback, "", "", nil, browser, tenantSession, adminSession)
+		check(w, 204)
+		previousTenant := tenantSession
+		tenantSession = w.Result().Cookies()[1]
+		check(request("GET", appSession, appOrigin, "", nil, previousTenant), 401)
+		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
+		check(request("POST", create, adminOrigin, "first-create-key", input, adminSession), 201)
+
+		callback, browser = oidcStart("/api/v1/admin/login", adminOrigin, nil, "admin", "")
+		w = request("GET", callback, "", "", nil, browser, adminSession, tenantSession)
+		check(w, 204)
+		previousAdmin := adminSession
+		adminSession = w.Result().Cookies()[1]
+		check(request("POST", create, adminOrigin, "first-create-key", input, previousAdmin), 401)
+		check(request("POST", create, adminOrigin, "first-create-key", input, adminSession), 201)
+		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
+	})
+
+	t.Run("cleanup retains active sessions and audit history", func(t *testing.T) {
+		appSession := "/api/v1/app/tenants/" + tenant + "/session"
+		exec(`INSERT INTO hive.platform_sessions SELECT $1,principal_id,statement_timestamp()-interval '1 minute'
+			FROM hive.platform_sessions WHERE digest=$2`, identity.Digest("expired-platform-fixture"), identity.Digest(adminSession.Value))
+		exec(`INSERT INTO hive.tenant_sessions SELECT $1,tenant_id,principal_id,statement_timestamp()-interval '1 minute'
+			FROM hive.tenant_sessions WHERE digest=$2`, identity.Digest("expired-tenant-fixture"), identity.Digest(tenantSession.Value))
+		check(request("GET", appSession, appOrigin, "", nil, &http.Cookie{Name: tenantCookie, Value: "expired-tenant-fixture"}), 401)
+		check(request("POST", create, adminOrigin, "first-create-key", input,
+			&http.Cookie{Name: platformCookie, Value: "expired-platform-fixture"}), 401)
+		store := identity.Store{DB: db}
+		for i := 0; i < 2; i++ {
+			if err := store.RemoveExpiredAuthState(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var expiredCount, auditCount int
+		if err := db.QueryRow(t.Context(), `SELECT
+			(SELECT count(*) FROM hive.platform_sessions WHERE expires_at <= statement_timestamp()) +
+			(SELECT count(*) FROM hive.tenant_sessions WHERE expires_at <= statement_timestamp()) +
+			(SELECT count(*) FROM hive.oidc_flows WHERE expires_at <= statement_timestamp()),
+			(SELECT count(*) FROM hive.provisioning_audit WHERE tenant_id=$1 AND action='activate' AND outcome='succeeded')`, tenant).
+			Scan(&expiredCount, &auditCount); err != nil || expiredCount != 0 || auditCount != 1 {
+			t.Fatalf("cleanup affected wrong records: expired %d, audit %d: %v", expiredCount, auditCount, err)
+		}
+		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
+		check(request("POST", create, adminOrigin, "first-create-key", input, adminSession), 201)
+	})
+
 	exec(`DELETE FROM hive.platform_permissions WHERE permission='platform.tenants.activate'`)
 	check(request("POST", activate, adminOrigin, successfulKey, activation, adminSession), 403)
 }

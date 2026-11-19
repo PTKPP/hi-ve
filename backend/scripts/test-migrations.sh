@@ -91,6 +91,22 @@ expect_sql hive_upgrade "$version" "$((latest + 1))"
 expect_sql hive_upgrade "SELECT to_regclass('hive.migration_test_partial') IS NULL" t
 printf 'PASS: failed migration rolled back DDL and retained schema version\n'
 
+mkdir "$scratch/provisioning_baseline"
+cp migrations/00[1-4]_*.sql "$scratch/provisioning_baseline/"
+sql hive_test 'CREATE DATABASE hive_sessions_upgrade'
+migrate hive_sessions_upgrade "$scratch/provisioning_baseline"
+expect_sql hive_sessions_upgrade "$version" 4
+sql hive_sessions_upgrade "WITH principal AS (
+    INSERT INTO hive.google_principals (issuer,subject) VALUES ('https://accounts.google.com','session-upgrade-fixture') RETURNING id
+), admin AS (
+    INSERT INTO hive.platform_principals (principal_id) SELECT id FROM principal RETURNING principal_id
+) INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
+  SELECT decode(repeat('a5',32),'hex'),principal_id,statement_timestamp()+interval '1 hour' FROM admin"
+migrate hive_sessions_upgrade migrations
+expect_sql hive_sessions_upgrade "$version" "$latest"
+expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.platform_sessions WHERE digest=decode(repeat('a5',32),'hex') AND expires_at>statement_timestamp()" 1
+printf 'PASS: session expiry migration preserves active sessions from version 004\n'
+
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
     go test -race -count=1 ./internal/transport -run '^TestProvisioningPostgres$'

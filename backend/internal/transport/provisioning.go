@@ -275,7 +275,7 @@ func (a API) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	const lifetime = 8 * time.Hour
 	token := rand.Text()
-	if err = a.Identity.StartSession(ctx, proof, flow.Tenant, token, time.Now().Add(lifetime)); err != nil {
+	if err = a.Identity.StartSession(ctx, proof, flow.Tenant, token, cookie(r, name), time.Now().Add(lifetime)); err != nil {
 		handleError(w, err)
 		return
 	}
