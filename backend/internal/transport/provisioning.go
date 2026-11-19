@@ -170,7 +170,7 @@ func (a API) activate(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, key := r.PathValue("tenant_id"), r.Header.Get("Idempotency-Key")
 	if !uuid.MatchString(tenant) || !uuid.MatchString(input.Claim) || !keyPattern.MatchString(key) ||
-		!referencePattern.MatchString(input.Method) || !referencePattern.MatchString(input.Reference) {
+		input.Method != "verified-organization-contact" || !referencePattern.MatchString(input.Reference) {
 		fail(w, http.StatusBadRequest, "INVALID_REQUEST")
 		return
 	}

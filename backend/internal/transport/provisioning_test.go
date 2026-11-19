@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"hi-ve/backend/internal/identity"
@@ -284,6 +286,9 @@ func TestProvisioningPostgres(t *testing.T) {
 	check(request("POST", "/api/v1/app/owner-claim", appOrigin, "", claimInput, nil), 404)
 	activation := provisioning.ActivateInput{Claim: claim, Method: "verified-organization-contact", Reference: "ORG-112"}
 	activate := create + "/" + tenant + "/activate"
+	wrongVerification := activation
+	wrongVerification.Method = "invite-email"
+	check(request("POST", activate, adminOrigin, "invalid-verification", wrongVerification, adminSession), 400)
 	check(request("POST", create+"/"+anotherTenant+"/activate", adminOrigin, "wrong-tenant-key", activation, adminSession), 409)
 	exec(`DELETE FROM hive.platform_permissions WHERE permission='platform.tenants.activate'`)
 	check(request("POST", activate, adminOrigin, "deny-no-activate", activation, adminSession), 403)
@@ -315,17 +320,27 @@ func TestProvisioningPostgres(t *testing.T) {
 		t.Fatalf("concurrent results: %d/%d", x.Code, y.Code)
 	}
 	// Retrying whichever key committed must not consume the claim a second time.
-	found := false
+	successfulKey := ""
 	for _, key := range []string{"activation-retry-key", "concurrent-other-key"} {
 		result := request("POST", activate, adminOrigin, key, activation, adminSession)
 		if result.Code == 200 {
-			found = true
+			successfulKey = key
 			continue
 		}
 		check(result, 409)
 	}
-	if !found {
+	if successfulKey == "" {
 		t.Fatal("successful activation receipt missing")
+	}
+	changedActivation := activation
+	changedActivation.Reference = "ORG-999"
+	check(request("POST", activate, adminOrigin, successfulKey, changedActivation, adminSession), 409)
+	_, err = db.Exec(t.Context(), `INSERT INTO hive.tenant_memberships (tenant_id, principal_id, owner_id, role)
+		SELECT c.tenant_id, p.id, c.id, 'primary_owner' FROM hive.owner_candidates c
+		CROSS JOIN hive.google_principals p WHERE c.tenant_id=$1 AND p.subject='admin'`, tenant)
+	var duplicate *pgconn.PgError
+	if !errors.As(err, &duplicate) || duplicate.ConstraintName != "tenant_active_primary_owner" {
+		t.Fatal("database did not enforce unique active Primary Owner")
 	}
 	var owners, records int
 	if err = db.QueryRow(t.Context(), `SELECT
@@ -341,5 +356,10 @@ func TestProvisioningPostgres(t *testing.T) {
 	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", tenant), appOrigin, "", nil, tenantSession), 200)
 	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", anotherTenant), appOrigin, "", nil, tenantSession), 401)
 	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", tenant), appOrigin, "", nil, adminSession), 401)
-	check(request("POST", create, adminOrigin, "invalid-admin-session", input, tenantSession), 401)
+	check(request("POST", create, adminOrigin, "invalid-admin-session", input,
+		&http.Cookie{Name: platformCookie, Value: tenantSession.Value}), 401)
+	check(request("GET", fmt.Sprintf("/api/v1/app/tenants/%s/session", tenant), appOrigin, "", nil,
+		&http.Cookie{Name: tenantCookie, Value: adminSession.Value}), 401)
+	exec(`DELETE FROM hive.platform_permissions WHERE permission='platform.tenants.activate'`)
+	check(request("POST", activate, adminOrigin, successfulKey, activation, adminSession), 403)
 }
