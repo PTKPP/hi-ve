@@ -90,8 +90,8 @@ func ownerActor(ctx context.Context, tx pgx.Tx, tenant, token string) (string, e
 	err := tx.QueryRow(ctx, `SELECT m.principal_id,m.role
 		FROM hive.tenant_sessions s JOIN hive.tenant_memberships m USING (tenant_id,principal_id)
 		JOIN hive.active_tenants t ON t.id=s.tenant_id
-		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active
-		FOR SHARE OF s,m`, Digest(token), tenant).Scan(&actor, &role)
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active`,
+		Digest(token), tenant).Scan(&actor, &role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrUnauthenticated
 	}
@@ -101,7 +101,27 @@ func ownerActor(ctx context.Context, tx pgx.Tx, tenant, token string) (string, e
 	if role != "primary_owner" {
 		return "", ErrForbidden
 	}
-	return actor, nil
+	// Match the issuance/lifecycle lock order. Recheck the presented session after
+	// locking its membership, since another browser transaction could rotate it.
+	err = tx.QueryRow(ctx, `SELECT role FROM hive.tenant_memberships
+		WHERE tenant_id=$1 AND principal_id=$2 AND active FOR SHARE`, tenant, actor).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUnauthenticated
+	}
+	if err != nil {
+		return "", err
+	}
+	if role != "primary_owner" {
+		return "", ErrForbidden
+	}
+	err = tx.QueryRow(ctx, `SELECT s.principal_id FROM hive.tenant_sessions s
+		JOIN hive.active_tenants t ON t.id=s.tenant_id
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.principal_id=$3 AND s.expires_at>clock_timestamp()
+		FOR SHARE OF s`, Digest(token), tenant, actor).Scan(&actor)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUnauthenticated
+	}
+	return actor, err
 }
 
 func (s RBAC) List(ctx context.Context, tenant, token string) (RoleList, error) {

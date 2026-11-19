@@ -108,13 +108,38 @@ expect_sql hive_sessions_upgrade "$version" 5
 session_query="SELECT count(*) FROM hive.platform_sessions WHERE digest=decode(repeat('a5',32),'hex') AND expires_at>statement_timestamp()"
 expect_sql hive_sessions_upgrade "$session_query" 1
 printf 'PASS: session expiry migration preserves active sessions from version 004\n'
+sql hive_sessions_upgrade "WITH tenant AS (
+    INSERT INTO hive.tenants(display_name,status) VALUES ('legacy membership fixture','active') RETURNING id
+) INSERT INTO hive.tenant_memberships (tenant_id,principal_id,role)
+  SELECT tenant.id,g.id,'staff' FROM tenant CROSS JOIN hive.google_principals g
+  WHERE g.subject='session-upgrade-fixture'"
 migrate hive_sessions_upgrade migrations
 expect_sql hive_sessions_upgrade "$version" "$latest"
 expect_sql hive_sessions_upgrade "$session_query" 1
 expect_sql hive_sessions_upgrade 'SELECT count(*) FROM hive.tenant_roles' 0
 expect_sql hive_sessions_upgrade 'SELECT count(*) FROM hive.tenant_rbac_audit' 0
 printf 'PASS: RBAC schema upgrade preserves sessions and starts without default grants\n'
+expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.tenant_memberships m
+    JOIN hive.google_principals g ON g.id=m.principal_id
+    JOIN hive.identity_principals p ON p.id=m.principal_id
+    WHERE g.subject='session-upgrade-fixture' AND m.active AND m.lifecycle_revision=0" 1
+expect_sql hive_sessions_upgrade "SELECT count(*) FROM pg_constraint
+    WHERE conrelid='hive.tenant_memberships'::regclass AND convalidated
+    AND conname IN ('tenant_memberships_principal_id_fkey','membership_identity_principal_fk')" 2
+printf 'PASS: principal backfill preserves member IDs and keeps both validated membership FKs\n'
+sql hive_sessions_upgrade "CREATE ROLE hive_legacy_identity_fixture NOLOGIN;
+    GRANT USAGE ON SCHEMA hive TO hive_legacy_identity_fixture;
+    GRANT SELECT, INSERT, UPDATE ON hive.google_principals TO hive_legacy_identity_fixture;
+    GRANT INSERT ON hive.identity_principals TO hive_legacy_identity_fixture;
+    SET ROLE hive_legacy_identity_fixture;
+    INSERT INTO hive.google_principals(issuer, subject)
+      VALUES ('https://accounts.google.com','legacy-writer-fixture')
+      ON CONFLICT (issuer,subject) DO UPDATE SET subject=EXCLUDED.subject;
+    RESET ROLE"
+expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.google_principals g
+    JOIN hive.identity_principals p ON p.id=g.id WHERE g.subject='legacy-writer-fixture'" 1
+printf 'PASS: legacy Google upsert works with a scoped role after expand\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership)Postgres$'

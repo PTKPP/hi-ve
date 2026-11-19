@@ -50,6 +50,18 @@ func (s Store) StartSession(ctx context.Context, proof GoogleIdentity, tenant, s
 		return ErrInvalidProof
 	}
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if tenant != "" {
+			// Lock both memberships before touching session rows. A browser can switch
+			// principals in one tenant, so acquire these locks in stable ID order.
+			_, err := tx.Exec(ctx, `SELECT m.principal_id FROM hive.tenant_memberships m
+				WHERE m.tenant_id=$1 AND (
+					m.principal_id=(SELECT id FROM hive.google_principals WHERE issuer=$2 AND subject=$3)
+					OR m.principal_id=(SELECT principal_id FROM hive.tenant_sessions WHERE tenant_id=$1 AND digest=$4)
+				) ORDER BY m.principal_id FOR SHARE`, tenant, proof.issuer, proof.subject, Digest(previous))
+			if err != nil {
+				return err
+			}
+		}
 		if err := insertSession(ctx, tx, proof, tenant, secret, expires); err != nil {
 			return err
 		}

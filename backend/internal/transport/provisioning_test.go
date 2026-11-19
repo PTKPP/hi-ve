@@ -144,7 +144,13 @@ func disposableDatabase(t *testing.T) *pgxpool.Pool {
 	if err != nil || u.Hostname() != "127.0.0.1" || u.Path != "/hive_test" {
 		t.Fatal("integration tests require the loopback disposable database")
 	}
-	db, err := pgxpool.New(t.Context(), dsn)
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The concurrency suites keep several blocked transactions plus an observer.
+	config.MaxConns = 8
+	db, err := pgxpool.NewWithConfig(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}

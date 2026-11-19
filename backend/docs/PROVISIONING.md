@@ -6,11 +6,11 @@ This backend slice implements the approved D1–D5 contract. The issue records t
 
 Run the migration checks on disposable PostgreSQL with the command in [DATABASE.md](DATABASE.md). The script also runs the HTTP provisioning acceptance tests against its temporary database and a local provider with signed OIDC fixtures.
 
-The Go command is `go run ./cmd/api` from `backend/`. Apply the repository migrations through 007 to the authorized development/test target first. Configure the following outside the repository.
+The Go command is `go run ./cmd/api` from `backend/`. Apply the repository migrations through 012 to the authorized development/test target first. Configure the following outside the repository.
 
 | Environment | Purpose |
 | --- | --- |
-| `HIVE_DATABASE_URL` | Scoped application DB role, with the required DML and read-only access to the migration version. Use the migration role separately. |
+| `HIVE_DATABASE_URL` | Scoped application DB role, with the required DML and read-only access to the migration version. Use the migration role separately. Legacy Google writers need INSERT on the neutral registry for the compatibility trigger introduced by 012. |
 | `HIVE_RECEIPT_HMAC_KEY` | Stable hex-encoded key of at least 32 random bytes. Keep it available for existing receipts. Rotation needs a compatible verification plan before the old key can retire. |
 | `HIVE_ADMIN_ORIGIN`, `HIVE_APP_ORIGIN` | Distinct exact HTTPS UI origins. Browser clients send credentials on API calls. Run UI and API on the same site for SameSite Lax cookies. |
 | `HIVE_GOOGLE_CLIENT_ID`, `HIVE_GOOGLE_CLIENT_SECRET`, `HIVE_GOOGLE_REDIRECT_URL` | Direct Google OAuth client and exact HTTPS callback ending in `/api/v1/oidc/google/callback`. |

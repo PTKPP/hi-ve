@@ -37,20 +37,20 @@ func expectStatus(t *testing.T, res *httptest.ResponseRecorder, status int) {
 	}
 }
 
-func waitForBlocked(t *testing.T, db *pgxpool.Pool, pid uint32) {
+func waitForBlocked(t *testing.T, db *pgxpool.Pool, pid uint32) uint32 {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		var blocked bool
-		err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked)
+		var blocked uint32
+		err := db.QueryRow(ctx, `SELECT COALESCE((SELECT pid FROM pg_stat_activity WHERE $1::integer=ANY(pg_blocking_pids(pid)) LIMIT 1),0)`, pid).Scan(&blocked)
 		if err != nil {
 			t.Fatalf("waiting for transaction ordering: %v", err)
 		}
-		if blocked {
-			return
+		if blocked != 0 {
+			return blocked
 		}
 		select {
 		case <-ticker.C:
