@@ -99,20 +99,25 @@ func TestLogoutPostgres(t *testing.T) {
 	BEGIN PERFORM pg_advisory_xact_lock(8031502); RETURN NEW; END $$;
 	CREATE TRIGGER test_hold_logout BEFORE INSERT ON hive.session_logout_audit
 	FOR EACH ROW EXECUTE FUNCTION hive.test_hold_logout()`)
-	start := call("POST", base+"/login", appOrigin, browserB)
-	expectStatus(t, start, 200)
-	var payload map[string]string
-	if err := json.Unmarshal(start.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
+	startLogin := func(previous *http.Cookie) (string, *http.Cookie) {
+		t.Helper()
+		start := call("POST", base+"/login", appOrigin, previous)
+		expectStatus(t, start, 200)
+		var payload map[string]string
+		if err := json.Unmarshal(start.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		auth, err := url.Parse(payload["authorization_url"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := auth.Query()
+		return "/api/v1/oidc/google/callback?" + url.Values{
+			"state": {q.Get("state")}, "code": {signed("logout-owner-a", q.Get("nonce"), "")},
+		}.Encode(), start.Result().Cookies()[0]
 	}
-	auth, err := url.Parse(payload["authorization_url"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := auth.Query()
-	callback := "/api/v1/oidc/google/callback?" + url.Values{
-		"state": {q.Get("state")}, "code": {signed("logout-owner-a", q.Get("nonce"), "")},
-	}.Encode()
+	callback, flow := startLogin(browserB)
+
 	blocker, err := db.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +129,7 @@ func TestLogoutPostgres(t *testing.T) {
 	go func() { results <- call("POST", logout, appOrigin, browserB) }()
 	logoutPID := waitForBlocked(t, db, blocker.Conn().PgConn().PID())
 	login := make(chan *httptest.ResponseRecorder, 1)
-	go func() { login <- call("GET", callback, "", start.Result().Cookies()[0], browserB) }()
+	go func() { login <- call("GET", callback, "", flow, browserB) }()
 	waitForBlocked(t, db, logoutPID)
 	if err = blocker.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -137,6 +142,35 @@ func TestLogoutPostgres(t *testing.T) {
 	expectStatus(t, call("GET", base+"/session", appOrigin, browserB), 401)
 	expectStatus(t, call("GET", base+"/session", appOrigin, newCookie), 200)
 	exec(`DROP TRIGGER test_hold_logout ON hive.session_logout_audit`)
+
+	// Reverse the order: rotation holds the old row, so a concurrent logout
+	// must retry as a no-op and must not clear the newly issued cookie.
+	exec(`CREATE FUNCTION hive.test_hold_rotation() RETURNS trigger LANGUAGE plpgsql AS $$
+	BEGIN PERFORM pg_advisory_xact_lock(8031503); RETURN OLD; END $$;
+	CREATE TRIGGER test_hold_rotation BEFORE DELETE ON hive.tenant_sessions
+	FOR EACH ROW EXECUTE FUNCTION hive.test_hold_rotation()`)
+	callback, flow = startLogin(newCookie)
+	rotationBlocker, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rotationBlocker.Rollback(ctx)
+	if _, err = rotationBlocker.Exec(ctx, `SELECT pg_advisory_xact_lock(8031503)`); err != nil {
+		t.Fatal(err)
+	}
+	go func() { login <- call("GET", callback, "", flow, newCookie) }()
+	rotationPID := waitForBlocked(t, db, rotationBlocker.Conn().PgConn().PID())
+	go func() { results <- call("POST", logout, appOrigin, newCookie) }()
+	waitForBlocked(t, db, rotationPID)
+	if err = rotationBlocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rotated := <-login
+	expectStatus(t, rotated, 204)
+	expectLogout(<-results, "")
+	expectStatus(t, call("GET", base+"/session", appOrigin, newCookie), 401)
+	expectStatus(t, call("GET", base+"/session", appOrigin, rotated.Result().Cookies()[1]), 200)
+	exec(`DROP TRIGGER test_hold_rotation ON hive.tenant_sessions`)
 
 	var tenantEvents, platformEvents, otherPlatformSessions int
 	err = db.QueryRow(ctx, `SELECT
