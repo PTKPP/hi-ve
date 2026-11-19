@@ -3,10 +3,13 @@ package transport
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"hi-ve/backend/internal/identity"
 )
@@ -185,4 +188,14 @@ func TestMembershipPostgres(t *testing.T) {
 	if err != nil || mirrored != 2 {
 		t.Fatalf("legacy Google writer did not keep neutral registry in sync: %v", err)
 	}
+	// The expand step mirrors existing Google identities and keeps PIN-only onboarding gated.
+	_, err = db.Exec(ctx, `WITH neutral AS (INSERT INTO hive.identity_principals (id)
+		VALUES (gen_random_uuid()) RETURNING id)
+		INSERT INTO hive.tenant_memberships (tenant_id,principal_id,role)
+		SELECT $1,id,'staff' FROM neutral`, tenant)
+	var fk *pgconn.PgError
+	if !errors.As(err, &fk) || fk.ConstraintName != "tenant_memberships_principal_id_fkey" {
+		t.Fatalf("neutral-only membership bypassed the legacy Google FK: %v", err)
+	}
+
 }
