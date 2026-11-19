@@ -140,6 +140,22 @@ expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.google_principals g
     JOIN hive.identity_principals p ON p.id=g.id WHERE g.subject='legacy-writer-fixture'" 1
 printf 'PASS: legacy Google upsert works with a scoped role after expand\n'
 
+mkdir "$scratch/pairing_baseline"
+cp migrations/0{01..15}_*.sql "$scratch/pairing_baseline/"
+sql hive_test 'CREATE DATABASE hive_online_upgrade'
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 15
+sql hive_online_upgrade "WITH tenant AS (
+    INSERT INTO hive.tenants(display_name,status) VALUES ('existing tenant','active') RETURNING id
+) INSERT INTO hive.locations(tenant_id,code,name,kind)
+  SELECT id,'existing','Existing outlet','outlet' FROM tenant"
+cp migrations/0{16..17}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 17
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations WHERE code='existing' AND status='active'" 1
+expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.devices' 0
+printf 'PASS: device pairing upgrade from 015 preserves authoritative outlet IDs\n'
+
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices)Postgres$'

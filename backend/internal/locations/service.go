@@ -137,3 +137,20 @@ func (s Service) ResolveActiveOutlet(ctx context.Context, tenant, id string) (Lo
 	}
 	return outlet, err
 }
+
+// LockActiveOutlets checks authoritative tenant/type/status through commit.
+func LockActiveOutlets(ctx context.Context, tx pgx.Tx, tenant string, ids []string) (bool, error) {
+	rows, err := tx.Query(ctx, `SELECT l.id FROM hive.locations l
+		JOIN hive.active_tenants t ON t.id=l.tenant_id
+		WHERE l.tenant_id=$1 AND l.id=ANY($2::text[]::uuid[]) AND l.kind='outlet' AND l.status='active'
+		ORDER BY l.id FOR SHARE OF l,t`, tenant, ids)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	return count == len(ids) && count > 0, rows.Err()
+}

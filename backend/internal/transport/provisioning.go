@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 
+	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
@@ -46,6 +47,7 @@ type API struct {
 	Entitlements           entitlements.Service
 	Memberships            identity.MembershipLifecycle
 	Locations              locations.Service
+	Devices                devices.Service
 	Google                 Google
 	AdminOrigin, AppOrigin string
 	Deliver                func(context.Context, provisioning.Delivery) error
@@ -58,6 +60,7 @@ func (a API) Handler() http.Handler {
 	a.membershipRoutes(mux)
 	a.locationRoutes(mux)
 	a.logoutRoutes(mux)
+	a.deviceRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/owner-invitation", a.admin(a.reissue))

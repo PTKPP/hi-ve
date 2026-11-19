@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
@@ -38,11 +39,14 @@ func main() {
 func run(ctx context.Context) error {
 	dsn := os.Getenv("HIVE_DATABASE_URL")
 	key, err := hex.DecodeString(os.Getenv("HIVE_RECEIPT_HMAC_KEY"))
+	codeKey, codeErr := hex.DecodeString(os.Getenv("HIVE_DEVICE_PAIRING_CODE_KEY"))
+	previousCodeKey, previousCodeErr := hex.DecodeString(os.Getenv("HIVE_DEVICE_PAIRING_PREVIOUS_CODE_KEY"))
 	admin, app := os.Getenv("HIVE_ADMIN_ORIGIN"), os.Getenv("HIVE_APP_ORIGIN")
 	redirect := os.Getenv("HIVE_GOOGLE_REDIRECT_URL")
 	clientID, clientSecret := os.Getenv("HIVE_GOOGLE_CLIENT_ID"), os.Getenv("HIVE_GOOGLE_CLIENT_SECRET")
 	u, parseErr := url.Parse(redirect)
-	if dsn == "" || err != nil || len(key) < 32 || !validOrigin(admin) || !validOrigin(app) || admin == app ||
+	if dsn == "" || err != nil || len(key) < 32 || codeErr != nil || len(codeKey) < 32 || previousCodeErr != nil ||
+		(len(previousCodeKey) != 0 && len(previousCodeKey) < 32) || !validOrigin(admin) || !validOrigin(app) || admin == app ||
 		parseErr != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
 		u.Path != "/api/v1/oidc/google/callback" || clientID == "" || clientSecret == "" {
 		return errors.New("invalid database, HMAC, origins or OIDC configuration")
@@ -62,7 +66,7 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 15 {
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 17 {
 		return errors.New("required backend migrations are missing")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
@@ -70,6 +74,8 @@ func run(ctx context.Context) error {
 		return errors.New("Google OIDC discovery unavailable")
 	}
 	api := transport.API{Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
+		Devices: devices.Service{DB: db, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
+			AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets},
 		Locations: locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, FingerprintKey: key}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
@@ -94,6 +100,9 @@ func run(ctx context.Context) error {
 			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
+				if err := api.Devices.Cleanup(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
+					slog.Warn("expired device pairing state cleanup failed")
+				}
 				if err := store.RemoveExpiredAuthState(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
 					slog.Warn("expired authentication state cleanup failed")
 				}
