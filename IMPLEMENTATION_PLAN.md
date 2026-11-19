@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal tenant dan Primary Owner lulus gate lokal dan CI. Implementasi ada di Draft PR #3. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
+**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
 
 ## Audit dan exit Phase 00
 
@@ -122,3 +122,4 @@ Audit Draft PR #3 pada baseline `9b37f2c28896543abff7b2e1736b0cacd8b59dc2` menem
 | 02.approved | Pengguna menyetujui D1–D5 dan klarifikasinya. OPEN-011/016 APPROVED untuk provisioning awal. Entry Phase 02 masih menunggu merge PR #1 yang diotorisasi. |
 | 02.1 | PR #1 ditemukan sudah merged. Isi commit merge `5d8d937` identik dengan HEAD PR sebelum merge. Main tersinkron dan feature branch terpisah dibuat. Provisioning awal, migrasi 002–004, dan acceptance tests ditambahkan. |
 | 02.2 | Commit implementasi `b80447cf8bb8225939f5de037fd9a566090a1ea0` dan hardening `16054ab5a9e9107ff760dd977d3b0a89a53dbb5c` dipush ke `feat/phase-02-platform`. Draft PR #3 terbuka. CI push dan PR PASS. Phase 02 IN PROGRESS, dengan bukti provisioning awal pada PostgreSQL disposable dan Google OIDC fixture. |
+| 02.3 | Audit dan coverage FR/AC diperbarui. Rotasi scoped session, cleanup expiry dan migrasi 005 dipush pada `c683d5c3e7fb460996a5398d64f1444943d69e29`. CI push dan PR PASS. Phase 02 tetap IN PROGRESS dan PR #3 tetap draft. [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44526109159) · [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44526099740) |
