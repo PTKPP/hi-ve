@@ -12,3 +12,18 @@ if [[ -n "$unexpected" ]]; then
     exit 1
 fi
 printf 'PASS: Platform registry depends only on the Go standard library\n'
+
+# Check actual cross-package edges. New consumers must use the owning package's
+# public contract. Go enforces visibility for any nested internal package.
+go list -f '{{ $p := .ImportPath }}{{range .Imports}}{{printf "%s %s\n" $p .}}{{end}}' ./... |
+awk '
+    $2 !~ /^hi-ve\/backend\// { next }
+    $1 == "hi-ve/backend/cmd/api" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|platform\/provisioning|transport)$/ { next }
+    $1 == "hi-ve/backend/internal/transport" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|platform\/provisioning)$/ { next }
+    $1 == "hi-ve/backend/internal/platform/provisioning" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
+    { print "Unexpected module dependency:", $1, "->", $2 > "/dev/stderr"; failed=1 }
+    END { exit failed }
+'

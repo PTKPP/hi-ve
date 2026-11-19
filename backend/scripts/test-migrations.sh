@@ -90,3 +90,7 @@ fi
 expect_sql hive_upgrade "$version" "$((latest + 1))"
 expect_sql hive_upgrade "SELECT to_regclass('hive.migration_test_partial') IS NULL" t
 printf 'PASS: failed migration rolled back DDL and retained schema version\n'
+
+sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
+HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
+    go test -race -count=1 ./internal/transport -run '^TestProvisioningPostgres$'

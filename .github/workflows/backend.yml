@@ -32,5 +32,5 @@ jobs:
       - run: bash scripts/check-architecture.sh
       - name: Install pinned PostgreSQL migrator
         run: go install github.com/jackc/tern/v2@v2.4.3
-      - name: Test PostgreSQL migrations
+      - name: Test PostgreSQL migrations and provisioning
         run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/test-migrations.sh
