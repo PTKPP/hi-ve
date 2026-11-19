@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"hi-ve/backend/internal/identity"
 )
 
 func accessRequest(handler http.Handler, method, path, origin, key string, body any, cookies ...*http.Cookie) *httptest.ResponseRecorder {
@@ -58,4 +59,28 @@ func waitForBlocked(t *testing.T, db *pgxpool.Pool, pid uint32) uint32 {
 			t.Fatal("second transaction never waited on the targeted lock")
 		}
 	}
+}
+
+// ownerSessionFixture creates a tenant, its Owner and a scoped session on the disposable database.
+func ownerSessionFixture(t *testing.T, db *pgxpool.Pool, label string) (tenant, owner string, cookie *http.Cookie) {
+	t.Helper()
+	cookie = &http.Cookie{Name: tenantCookie, Value: label}
+	err := db.QueryRow(t.Context(), `WITH tenant AS (
+		INSERT INTO hive.tenants(display_name,status) VALUES ($1,'active') RETURNING id
+	), candidate AS (
+		INSERT INTO hive.owner_candidates(tenant_id,contact_email)
+		SELECT id,'fixture@example.test' FROM tenant RETURNING tenant_id,id
+	), principal AS (
+		INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com',$1) RETURNING id
+	), membership AS (
+		INSERT INTO hive.tenant_memberships(tenant_id,principal_id,owner_id,role)
+		SELECT tenant_id,principal.id,candidate.id,'primary_owner' FROM candidate CROSS JOIN principal
+		RETURNING tenant_id,principal_id
+	) INSERT INTO hive.tenant_sessions(digest,tenant_id,principal_id,expires_at)
+	SELECT $2,tenant_id,principal_id,clock_timestamp()+interval '1 hour' FROM membership
+	RETURNING tenant_id,principal_id`, label, identity.Digest(cookie.Value)).Scan(&tenant, &owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tenant, owner, cookie
 }

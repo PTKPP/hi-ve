@@ -84,8 +84,8 @@ func validateRole(name string, actions []string) (string, error) {
 	return name, nil
 }
 
-// ownerActor locks only the presented session and its membership for control-plane mutations.
-func ownerActor(ctx context.Context, tx pgx.Tx, tenant, token string) (string, error) {
+// AuthorizeTenantOwner locks only the presented session and its membership for control-plane mutations.
+func AuthorizeTenantOwner(ctx context.Context, tx pgx.Tx, tenant, token string) (string, error) {
 	var actor, role string
 	err := tx.QueryRow(ctx, `SELECT m.principal_id,m.role
 		FROM hive.tenant_sessions s JOIN hive.tenant_memberships m USING (tenant_id,principal_id)
@@ -207,7 +207,7 @@ func (s RBAC) Create(ctx context.Context, tenant, token, key string, input Creat
 	fingerprint := mac.Sum(nil)
 	result := RoleResult{Role: Role{Key: input.Key, Name: name, Actions: input.Actions}}
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		actor, err := ownerActor(ctx, tx, tenant, token)
+		actor, err := AuthorizeTenantOwner(ctx, tx, tenant, token)
 		if err != nil {
 			return err
 		}
@@ -262,7 +262,7 @@ func (s RBAC) Replace(ctx context.Context, tenant, token, id string, input Repla
 	}
 	var result RoleResult
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		actor, err := ownerActor(ctx, tx, tenant, token)
+		actor, err := AuthorizeTenantOwner(ctx, tx, tenant, token)
 		if err != nil {
 			return err
 		}
@@ -304,7 +304,7 @@ func (s RBAC) Assign(ctx context.Context, tenant, token, member string, input Re
 	}
 	result := AssignmentResult{MemberID: member, RoleIDs: ids}
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		actor, err := ownerActor(ctx, tx, tenant, token)
+		actor, err := AuthorizeTenantOwner(ctx, tx, tenant, token)
 		if err != nil {
 			return err
 		}

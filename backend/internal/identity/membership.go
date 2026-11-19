@@ -46,7 +46,7 @@ func (s MembershipLifecycle) Transition(ctx context.Context, tenant, member, tok
 	fingerprint := mac.Sum(nil)
 	var result MembershipResult
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		actor, err := ownerActor(ctx, tx, tenant, token)
+		actor, err := AuthorizeTenantOwner(ctx, tx, tenant, token)
 		if err != nil {
 			return err
 		}
