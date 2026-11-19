@@ -76,7 +76,7 @@ Gate lokal dijalankan pada Linux amd64, Go 1.26.5, dari `backend/`. Source baru 
 | OPEN-016 · acceptance | Review FR-HV-PLT-001/AC-01–02, FR-AUTH-01/AC-04–05, dan FR-HV-IDN-001/AC-01–03. UAT-HV-01 mencakup penolakan login dan isolasi konteks. Usulan tambahan menguji provisioning sukses, aktor tanpa izin, duplikasi/retry dan rollback tanpa tenant/Owner setengah jadi. |
 | Dampak dan rekomendasi | Prioritaskan slice tenant dan Primary Owner. Implementasi endpoint dan migrasi tabel bisnis menunggu keputusan slice tersebut. Tangani OPEN-004 untuk recovery, OPEN-007/008 untuk transaksi offline, dan OPEN-015 untuk OIDC di lingkungan target pada lingkup masing-masing. [Issue #2](https://github.com/PTKPP/hi-ve/issues/2) |
 
-**Proposal untuk review.** Buat tenant dan calon Owner dalam status `pending` melalui sesi Platform berizin. Tautkan calon Owner melalui klaim OIDC tervalidasi dan konfirmasi Superadmin, lalu aktifkan tenant dan tepat satu Primary Owner dalam satu transaksi. Gunakan receipt idempotensi, constraint tenant/member, audit dalam transaksi yang sama, dan uji jalur positif serta negatif sebelum menutup OPEN-011/016. Keputusan bukti verifikasi, lifecycle, dan AC tetap menunggu Product Owner, Engineering, QA dan Security. [Proposal di Issue #2](https://github.com/PTKPP/hi-ve/issues/2#issuecomment-7008116637)
+**Decision matrix siap disetujui.** Issue #2 menjadi rujukan untuk D1 (permission dan sesi), D2 (pending dan kebijakan duplikasi), D3 (bukti OIDC, verifikasi independen dan masa berlaku), D4 (kontrak, constraint, idempotensi, transaksi dan audit), serta D5 (acceptance). OPEN-011/016 tetap OPEN. Setelah persetujuan eksplisit atas slice dan merge PR #1 yang diotorisasi, buat `feat/phase-02-platform` dari `main` terbaru. [Decision matrix Issue #2](https://github.com/PTKPP/hi-ve/issues/2#issuecomment-7008116637)
 
 ## Riwayat checkpoint
 
@@ -91,3 +91,4 @@ Gate lokal dijalankan pada Linux amd64, Go 1.26.5, dari `backend/`. Source baru 
 | 02.entry | Review kontrak dan AC awal selesai. Issue #2 melacak keputusan yang memblokir implementasi provisioning. |
 | 01.5 | Review PR #1 dan CI pada SHA `852225d24ad689429002e5da698922cf89dd8219` PASS. PR Ready for Review. |
 | 02.proposal | Proposal kontrak dan AC provisioning dipublikasikan pada Issue #2. Entry masih BLOCKED oleh approval slice dan merge Phase 01. |
+| 02.decision | Review provisioning terhadap PRD, Functional Spec, Architecture dan AGENTS selesai. Decision matrix D1–D5 dipublikasikan di komentar Issue #2 yang sama. Hasil review Ready for Review pada PR #1 tetap berlaku. Implementasi dan DDL menunggu persetujuan slice serta merge yang diotorisasi. |
