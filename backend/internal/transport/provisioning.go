@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"hi-ve/backend/internal/identity"
+	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
 )
 
@@ -41,6 +42,7 @@ type API struct {
 	Provisioning           provisioning.Service
 	Identity               identity.Store
 	TenantRBAC             identity.RBAC
+	Entitlements           entitlements.Service
 	Google                 Google
 	AdminOrigin, AppOrigin string
 	Deliver                func(context.Context, provisioning.Delivery) error
@@ -49,6 +51,7 @@ type API struct {
 func (a API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	a.rbacRoutes(mux)
+	a.entitlementRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/owner-invitation", a.admin(a.reissue))
@@ -78,11 +81,7 @@ func (a API) origin(want string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", want)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		methods := "GET, POST, OPTIONS"
-		if want == a.AppOrigin {
-			methods = "GET, POST, PUT, OPTIONS"
-		}
-		w.Header().Set("Access-Control-Allow-Methods", methods)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key")
 		next(w, r)
 	}
