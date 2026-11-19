@@ -28,7 +28,8 @@ func TestLocationsPostgres(t *testing.T) {
 	), member AS (
 		INSERT INTO hive.tenant_memberships(tenant_id,principal_id,role) SELECT $1,id,'staff' FROM principal
 		RETURNING tenant_id,principal_id
-	) INSERT INTO hive.tenant_sessions SELECT $2,tenant_id,principal_id,clock_timestamp()+interval '1 hour' FROM member`, tenant, identity.Digest("locations-staff"))
+	) INSERT INTO hive.tenant_sessions(digest,tenant_id,principal_id,expires_at,auth_method)
+	SELECT $2,tenant_id,principal_id,clock_timestamp()+interval '1 hour','device_pin' FROM member`, tenant, identity.Digest("locations-staff"))
 	exec(`INSERT INTO hive.platform_principals(principal_id) VALUES ($1)`, owner)
 	exec(`INSERT INTO hive.platform_sessions VALUES ($1,$2,clock_timestamp()+interval '1 hour')`, identity.Digest("locations-platform"), owner)
 	service := locations.Service{DB: db, FingerprintKey: bytes.Repeat([]byte{6}, 32), AuthorizeOwner: identity.AuthorizeTenantOwner}

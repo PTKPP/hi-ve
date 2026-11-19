@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 
+	"hi-ve/backend/internal/audit"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
@@ -48,6 +49,7 @@ type API struct {
 	Memberships            identity.MembershipLifecycle
 	Locations              locations.Service
 	Devices                devices.Service
+	LoginHistory           audit.LoginHistory
 	Google                 Google
 	AdminOrigin, AppOrigin string
 	Deliver                func(context.Context, provisioning.Delivery) error
@@ -61,6 +63,7 @@ func (a API) Handler() http.Handler {
 	a.locationRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
+	a.loginHistoryRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/owner-invitation", a.admin(a.reissue))
@@ -255,11 +258,13 @@ func (a API) callback(w http.ResponseWriter, r *http.Request) {
 	state, code := r.URL.Query().Get("state"), r.URL.Query().Get("code")
 	browser := cookie(r, flowCookie)
 	if state == "" || code == "" || browser == "" {
+		slog.Debug("Google callback rejected before flow attribution")
 		handleError(w, identity.ErrInvalidProof)
 		return
 	}
 	flow, err := a.Identity.TakeFlow(r.Context(), state, browser)
 	if errors.Is(err, pgx.ErrNoRows) {
+		slog.Debug("Google callback rejected by flow validation")
 		err = identity.ErrInvalidProof
 	}
 	if err != nil {
@@ -271,6 +276,7 @@ func (a API) callback(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	proof, err := a.Google.Exchange(ctx, code, flow.Nonce, flow.Verifier)
 	if err != nil {
+		slog.Debug("Google callback rejected by proof validation")
 		handleError(w, err)
 		return
 	}
@@ -289,7 +295,7 @@ func (a API) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	const lifetime = 8 * time.Hour
 	token := rand.Text()
-	if err = a.Identity.StartSession(ctx, proof, flow.Tenant, token, cookie(r, name), time.Now().Add(lifetime)); err != nil {
+	if err = a.Identity.StartSession(ctx, proof, flow, token, cookie(r, name), time.Now().Add(lifetime)); err != nil {
 		handleError(w, err)
 		return
 	}

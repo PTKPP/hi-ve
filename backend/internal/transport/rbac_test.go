@@ -54,8 +54,8 @@ func TestTenantRBACPostgres(t *testing.T) {
 		), membership AS (
 			INSERT INTO hive.tenant_memberships(tenant_id,principal_id,role,active)
 			SELECT $1,id,'staff',$4 FROM principal RETURNING tenant_id,principal_id
-		) INSERT INTO hive.tenant_sessions(digest,tenant_id,principal_id,expires_at)
-		SELECT $3,tenant_id,principal_id,statement_timestamp()+interval '1 hour' FROM membership
+		) INSERT INTO hive.tenant_sessions(digest,tenant_id,principal_id,expires_at,auth_method)
+		SELECT $3,tenant_id,principal_id,statement_timestamp()+interval '1 hour','device_pin' FROM membership
 		RETURNING principal_id`, tenant, token, identity.Digest(token), active).Scan(&id)
 		if err != nil {
 			t.Fatal(err)

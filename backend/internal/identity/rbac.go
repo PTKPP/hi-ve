@@ -90,7 +90,8 @@ func AuthorizeTenantOwner(ctx context.Context, tx pgx.Tx, tenant, token string) 
 	err := tx.QueryRow(ctx, `SELECT m.principal_id,m.role
 		FROM hive.tenant_sessions s JOIN hive.tenant_memberships m USING (tenant_id,principal_id)
 		JOIN hive.active_tenants t ON t.id=s.tenant_id
-		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active`,
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active
+		AND (s.auth_method='device_pin' OR m.role='primary_owner')`,
 		Digest(token), tenant).Scan(&actor, &role)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrUnauthenticated
@@ -116,7 +117,7 @@ func AuthorizeTenantOwner(ctx context.Context, tx pgx.Tx, tenant, token string) 
 	}
 	err = tx.QueryRow(ctx, `SELECT s.principal_id FROM hive.tenant_sessions s
 		JOIN hive.active_tenants t ON t.id=s.tenant_id
-		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.principal_id=$3 AND s.expires_at>clock_timestamp()
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.principal_id=$3 AND s.expires_at>clock_timestamp() AND s.auth_method='google'
 		FOR SHARE OF s`, Digest(token), tenant, actor).Scan(&actor)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrUnauthenticated
@@ -133,7 +134,8 @@ func (s RBAC) List(ctx context.Context, tenant, token string) (RoleList, error) 
 			WHERE a.tenant_id=m.tenant_id AND a.principal_id=m.principal_id AND p.action=$3
 		) FROM hive.tenant_sessions s JOIN hive.tenant_memberships m USING (tenant_id,principal_id)
 		JOIN hive.active_tenants t ON t.id=s.tenant_id
-		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active`, Digest(token), tenant, rolesRead).Scan(&allowed)
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at>clock_timestamp() AND m.active
+			AND (s.auth_method='device_pin' OR m.role='primary_owner')`, Digest(token), tenant, rolesRead).Scan(&allowed)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUnauthenticated
 		}

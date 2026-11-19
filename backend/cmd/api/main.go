@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"hi-ve/backend/internal/audit"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
@@ -66,7 +67,7 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 17 {
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 19 {
 		return errors.New("required backend migrations are missing")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
@@ -74,6 +75,7 @@ func run(ctx context.Context) error {
 		return errors.New("Google OIDC discovery unavailable")
 	}
 	api := transport.API{Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
+		LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
 		Devices: devices.Service{DB: db, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
 			AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets},
 		Locations: locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, FingerprintKey: key}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
@@ -100,6 +102,12 @@ func run(ctx context.Context) error {
 			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
+				backlog, err := api.LoginHistory.Cleanup(cleanupCtx)
+				if err != nil && cleanupCtx.Err() == nil {
+					slog.Warn("online login history cleanup failed")
+				} else if backlog {
+					slog.Warn("online login history cleanup reached batch limit")
+				}
 				if err := api.Devices.Cleanup(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
 					slog.Warn("expired device pairing state cleanup failed")
 				}

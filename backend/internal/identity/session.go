@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"hi-ve/backend/internal/audit"
 )
 
 var (
@@ -18,8 +21,8 @@ var (
 type Store struct{ DB *pgxpool.Pool }
 
 type Flow struct {
-	Purpose, Tenant, Generation, Nonce, Verifier string
-	Expires                                      time.Time
+	Purpose, Tenant, Generation, Nonce, Verifier, EventID string
+	Expires                                               time.Time
 }
 
 func Digest(value string) []byte {
@@ -39,60 +42,106 @@ func (s Store) TakeFlow(ctx context.Context, state, browser string) (Flow, error
 	var f Flow
 	err := s.DB.QueryRow(ctx, `DELETE FROM hive.oidc_flows
 		WHERE state_digest=$1 AND browser_digest=$2 AND expires_at > clock_timestamp()
-		RETURNING purpose,COALESCE(tenant_id::text,''),COALESCE(generation::text,''),nonce,verifier,expires_at`,
-		Digest(state), Digest(browser)).Scan(&f.Purpose, &f.Tenant, &f.Generation, &f.Nonce, &f.Verifier, &f.Expires)
+		RETURNING purpose,COALESCE(tenant_id::text,''),COALESCE(generation::text,''),nonce,verifier,expires_at,event_id`,
+		Digest(state), Digest(browser)).Scan(&f.Purpose, &f.Tenant, &f.Generation, &f.Nonce, &f.Verifier, &f.Expires, &f.EventID)
 	return f, err
 }
 
-// StartSession replaces the browser's previous session in the same context after a valid login.
-func (s Store) StartSession(ctx context.Context, proof GoogleIdentity, tenant, secret, previous string, expires time.Time) error {
+// StartSession replaces only the browser's previous session in the same context.
+func (s Store) StartSession(ctx context.Context, proof GoogleIdentity, flow Flow, secret, previous string, expires time.Time) error {
 	if !proof.valid() {
 		return ErrInvalidProof
 	}
+	if flow.Purpose == "tenant" && flow.Tenant != "" && flow.EventID != "" {
+		return s.startOwnerSession(ctx, proof, flow, secret, previous, expires)
+	}
+	if flow.Purpose != "platform" || flow.Tenant != "" {
+		return ErrInvalidProof
+	}
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		if tenant != "" {
-			// Lock both memberships before touching session rows. A browser can switch
-			// principals in one tenant, so acquire these locks in stable ID order.
-			_, err := tx.Exec(ctx, `SELECT m.principal_id FROM hive.tenant_memberships m
-				WHERE m.tenant_id=$1 AND (
-					m.principal_id=(SELECT id FROM hive.google_principals WHERE issuer=$2 AND subject=$3)
-					OR m.principal_id=(SELECT principal_id FROM hive.tenant_sessions WHERE tenant_id=$1 AND digest=$4)
-				) ORDER BY m.principal_id FOR SHARE`, tenant, proof.issuer, proof.subject, Digest(previous))
-			if err != nil {
-				return err
-			}
-		}
-		if err := insertSession(ctx, tx, proof, tenant, secret, expires); err != nil {
+		tag, err := tx.Exec(ctx, `INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
+			SELECT $1,p.id,$4 FROM hive.google_principals p JOIN hive.platform_principals a ON a.principal_id=p.id
+			WHERE p.issuer=$2 AND p.subject=$3 AND a.active`, Digest(secret), proof.issuer, proof.subject, expires)
+		if err != nil {
 			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrForbidden
 		}
 		if previous == "" || previous == secret {
 			return nil
 		}
-		if tenant == "" {
-			_, err := tx.Exec(ctx, `DELETE FROM hive.platform_sessions WHERE digest=$1`, Digest(previous))
-			return err
-		}
-		_, err := tx.Exec(ctx, `DELETE FROM hive.tenant_sessions WHERE digest=$1 AND tenant_id=$2`, Digest(previous), tenant)
+		_, err = tx.Exec(ctx, `DELETE FROM hive.platform_sessions WHERE digest=$1`, Digest(previous))
 		return err
 	})
 }
 
-func insertSession(ctx context.Context, tx pgx.Tx, proof GoogleIdentity, tenant, secret string, expires time.Time) error {
-	var result string
-	var err error
-	if tenant == "" {
-		err = tx.QueryRow(ctx, `INSERT INTO hive.platform_sessions (digest,principal_id,expires_at)
-			SELECT $1,p.id,$4 FROM hive.google_principals p JOIN hive.platform_principals a ON a.principal_id=p.id
-			WHERE p.issuer=$2 AND p.subject=$3 AND a.active RETURNING principal_id`,
-			Digest(secret), proof.issuer, proof.subject, expires).Scan(&result)
-	} else {
-		err = tx.QueryRow(ctx, `INSERT INTO hive.tenant_sessions (digest,tenant_id,principal_id,expires_at)
-			SELECT $1,m.tenant_id,p.id,$4 FROM hive.google_principals p
-			JOIN hive.tenant_memberships m ON m.principal_id=p.id JOIN hive.active_tenants t ON t.id=m.tenant_id
-			WHERE p.issuer=$2 AND p.subject=$3 AND m.active AND t.id=$5 RETURNING principal_id`,
-			Digest(secret), proof.issuer, proof.subject, expires, tenant).Scan(&result)
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
+func (s Store) startOwnerSession(ctx context.Context, proof GoogleIdentity, flow Flow, secret, previous string, expires time.Time) error {
+	denied := false
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var actor string
+		err := tx.QueryRow(ctx, `SELECT m.principal_id FROM hive.tenant_memberships m
+			JOIN hive.google_principals p ON p.id=m.principal_id
+			WHERE m.tenant_id=$1 AND p.issuer=$2 AND p.subject=$3 AND m.role='primary_owner'`,
+			flow.Tenant, proof.issuer, proof.subject).Scan(&actor)
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Debug("tenant Google login rejected before Owner attribution")
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		// Lock both memberships before touching sessions, including a cookie from
+		// a different principal in the same tenant. Match lifecycle and logout ordering.
+		if _, err = tx.Exec(ctx, `SELECT m.principal_id FROM hive.tenant_memberships m
+			WHERE m.tenant_id=$1 AND (
+				m.principal_id=$2 OR m.principal_id=(
+					SELECT principal_id FROM hive.tenant_sessions WHERE tenant_id=$1 AND digest=$3
+				)
+			) ORDER BY m.principal_id FOR SHARE`, flow.Tenant, actor, Digest(previous)); err != nil {
+			return err
+		}
+		var active bool
+		err = tx.QueryRow(ctx, `SELECT active FROM hive.tenant_memberships
+			WHERE tenant_id=$1 AND principal_id=$2 AND role='primary_owner'`, flow.Tenant, actor).Scan(&active)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return err
+		}
+		if active {
+			var tenant string
+			err = tx.QueryRow(ctx, `SELECT id FROM hive.active_tenants WHERE id=$1 FOR SHARE`, flow.Tenant).Scan(&tenant)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			active = tenant != ""
+		}
+		if !active {
+			denied = true
+			_, err = audit.RecordOwnerLogin(ctx, tx, flow.EventID, flow.Tenant, actor, "denied")
+			return err
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO hive.tenant_sessions (digest,tenant_id,principal_id,expires_at,auth_method)
+			VALUES ($1,$2,$3,$4,'google')`, Digest(secret), flow.Tenant, actor, expires); err != nil {
+			return err
+		}
+		if previous != "" && previous != secret {
+			if _, err = tx.Exec(ctx, `DELETE FROM hive.tenant_sessions WHERE digest=$1 AND tenant_id=$2`, Digest(previous), flow.Tenant); err != nil {
+				return err
+			}
+		}
+		inserted, err := audit.RecordOwnerLogin(ctx, tx, flow.EventID, flow.Tenant, actor, "success")
+		if err == nil && !inserted {
+			return ErrInvalidProof
+		}
+		return err
+	})
+	if denied {
+		if err != nil {
+			slog.Error("denied tenant Google login event persistence failed")
+		}
 		return ErrForbidden
 	}
 	return err
@@ -122,7 +171,8 @@ func (s Store) TenantPrincipal(ctx context.Context, secret, tenant string) (stri
 	var id string
 	err := s.DB.QueryRow(ctx, `SELECT s.principal_id FROM hive.tenant_sessions s
 		JOIN hive.tenant_memberships m USING (tenant_id,principal_id) JOIN hive.active_tenants t ON t.id=s.tenant_id
-		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at > clock_timestamp() AND m.active`,
+		WHERE s.digest=$1 AND s.tenant_id=$2 AND s.expires_at > clock_timestamp() AND m.active
+		AND (s.auth_method='device_pin' OR m.role='primary_owner')`,
 		Digest(secret), tenant).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrUnauthenticated

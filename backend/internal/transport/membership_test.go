@@ -50,9 +50,14 @@ func TestMembershipPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`INSERT INTO hive.tenant_memberships(tenant_id,principal_id,role) VALUES ($1,$3,'staff'),($2,$3,'staff')`, tenant, other, staff)
-	exec(`INSERT INTO hive.tenant_sessions VALUES ($1,$4,$6,clock_timestamp()+interval '1 hour'),
-		($2,$4,$6,clock_timestamp()+interval '1 hour'),($3,$5,$6,clock_timestamp()+interval '1 hour')`,
-		identity.Digest("staff-browser-a"), identity.Digest("staff-browser-b"), identity.Digest("staff-other-tenant"), tenant, other, staff)
+	exec(`INSERT INTO hive.tenant_sessions(digest,tenant_id,principal_id,expires_at,auth_method)
+		VALUES ($1,$4,$6,clock_timestamp()+interval '1 hour','device_pin'),
+		($2,$4,$6,clock_timestamp()+interval '1 hour','device_pin'),
+		($3,$5,$6,clock_timestamp()+interval '1 hour','device_pin'),
+		($7,$4,$6,clock_timestamp()+interval '1 hour','device_pin'),
+		($8,$4,$6,clock_timestamp()+interval '1 hour','device_pin')`,
+		identity.Digest("staff-browser-a"), identity.Digest("staff-browser-b"), identity.Digest("staff-other-tenant"), tenant, other, staff,
+		identity.Digest("staff-browser-c"), identity.Digest("staff-browser-rotation"))
 	if err := db.QueryRow(ctx, `INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES ($1,'reader','Reader') RETURNING id`, tenant).Scan(&role); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +106,7 @@ func TestMembershipPostgres(t *testing.T) {
 	}
 	exec(`DROP TRIGGER test_membership_audit_failure ON hive.membership_lifecycle_audit`)
 
-	freshLogin := func() (string, *http.Cookie) {
+	freshLogin := func(subject string) (string, *http.Cookie) {
 		t.Helper()
 		w := call("POST", base+"/login", "", nil)
 		expectStatus(t, w, 200)
@@ -115,11 +120,14 @@ func TestMembershipPostgres(t *testing.T) {
 		}
 		q := auth.Query()
 		callback := "/api/v1/oidc/google/callback?" + url.Values{
-			"state": {q.Get("state")}, "code": {signed("membership-staff", q.Get("nonce"), "")},
+			"state": {q.Get("state")}, "code": {signed(subject, q.Get("nonce"), "")},
 		}.Encode()
 		return callback, w.Result().Cookies()[0]
 	}
-	// Pause a real session issuance between its membership lock and INSERT.
+	callback, browser := freshLogin("membership-staff")
+	expectStatus(t, call("GET", callback, "", nil, browser), 403)
+	// Rotate a browser from a staff fixture session to a real Owner Google session.
+	// The existing staff membership must remain locked until issuance commits.
 	exec(`CREATE FUNCTION hive.test_hold_membership_issuance() RETURNS trigger LANGUAGE plpgsql AS $$
 	BEGIN PERFORM pg_advisory_xact_lock(8031206); RETURN NEW; END $$;
 	CREATE TRIGGER test_hold_membership_issuance BEFORE INSERT ON hive.tenant_sessions
@@ -132,9 +140,9 @@ func TestMembershipPostgres(t *testing.T) {
 	if _, err = blocker.Exec(ctx, `SELECT pg_advisory_xact_lock(8031206)`); err != nil {
 		t.Fatal(err)
 	}
-	callback, browser := freshLogin()
+	callback, browser = freshLogin("membership-owner")
 	loginDone := make(chan *httptest.ResponseRecorder, 1)
-	go func() { loginDone <- call("GET", callback, "", nil, browser) }()
+	go func() { loginDone <- call("GET", callback, "", nil, browser, cookieFor("staff-browser-rotation")) }()
 	issuerPID := waitForBlocked(t, db, blocker.Conn().PgConn().PID())
 	deactivated := make(chan *httptest.ResponseRecorder, 1)
 	go func() { deactivated <- call("POST", deactivate, changeKey, change(0), ownerCookie) }()
@@ -151,16 +159,16 @@ func TestMembershipPostgres(t *testing.T) {
 	}
 	issued := <-loginDone
 	expectStatus(t, issued, 204)
-	newStaff := issued.Result().Cookies()[1]
+	newOwner := issued.Result().Cookies()[1]
 	first := <-deactivated
 	expectStatus(t, first, 200)
 	expectStatus(t, <-assignment, 409)
 	exec(`DROP TRIGGER test_hold_membership_issuance ON hive.tenant_sessions`)
-	for _, session := range []*http.Cookie{staffA, staffB, newStaff} {
+	for _, session := range []*http.Cookie{staffA, staffB, cookieFor("staff-browser-c"), cookieFor("staff-browser-rotation")} {
 		expectStatus(t, call("GET", base+"/session", "", nil, session), 401)
 	}
 	expectStatus(t, call("GET", "/api/v1/app/tenants/"+other+"/session", "", nil, staffOther), 200)
-	callback, browser = freshLogin()
+	callback, browser = freshLogin("membership-staff")
 	expectStatus(t, call("GET", callback, "", nil, browser), 403)
 	replay := call("POST", deactivate, changeKey, change(0), ownerCookie)
 	if replay.Body.String() != first.Body.String() {
@@ -169,13 +177,17 @@ func TestMembershipPostgres(t *testing.T) {
 	expectStatus(t, call("POST", deactivate, changeKey, change(1), ownerCookie), 409)
 	expectStatus(t, call("POST", deactivate, "old-revision-other-key", change(0), ownerCookie), 409)
 	expectStatus(t, call("POST", reactivate, "membership-reactivate-key", change(1), ownerCookie), 200)
-	expectStatus(t, call("GET", base+"/session", "", nil, newStaff), 401)
-	callback, browser = freshLogin()
-	reauth := call("GET", callback, "", nil, browser)
-	expectStatus(t, reauth, 204)
-	expectStatus(t, call("GET", base+"/roles", "", nil, reauth.Result().Cookies()[1]), 403)
+	expectStatus(t, call("GET", base+"/session", "", nil, staffA), 401)
+	callback, browser = freshLogin("membership-staff")
+	expectStatus(t, call("GET", callback, "", nil, browser), 403)
+	// A fixture representing a future fresh staff login must have no prior grants.
+	reauth := cookieFor("staff-new-fixture")
+	exec(`INSERT INTO hive.tenant_sessions (digest,tenant_id,principal_id,expires_at,auth_method)
+		VALUES ($1,$2,$3,clock_timestamp()+interval '1 hour','device_pin')`, identity.Digest(reauth.Value), tenant, staff)
+	expectStatus(t, call("GET", base+"/roles", "", nil, reauth), 403)
 	expectStatus(t, call("POST", deactivate, changeKey, change(0), ownerCookie), 200)
-	expectStatus(t, call("GET", base+"/session", "", nil, reauth.Result().Cookies()[1]), 200)
+	expectStatus(t, call("GET", base+"/session", "", nil, reauth), 200)
+	expectStatus(t, call("GET", base+"/session", "", nil, newOwner), 200)
 
 	var count, removed int
 	err = db.QueryRow(ctx, `SELECT count(*),max(revoked_sessions) FROM hive.membership_lifecycle_audit
