@@ -62,7 +62,7 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 14 {
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 15 {
 		return errors.New("required backend migrations are missing")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)

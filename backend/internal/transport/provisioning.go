@@ -57,6 +57,7 @@ func (a API) Handler() http.Handler {
 	a.entitlementRoutes(mux)
 	a.membershipRoutes(mux)
 	a.locationRoutes(mux)
+	a.logoutRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/owner-invitation", a.admin(a.reissue))

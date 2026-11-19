@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. RBAC tenant-wide RB1–RB6 disetujui dan diimplementasikan. Entitlement online dan Membership Lifecycle existing diimplementasikan untuk scope yang disetujui. Locations Foundation minimal kini berada di Phase 02 sebelum Devices. Devices/PIN menunggu kontrak rinci. Scoped logout S1 disetujui untuk increment terpisah. [Issue #5](https://github.com/PTKPP/hi-ve/issues/5) · [Issue #6](https://github.com/PTKPP/hi-ve/issues/6) [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
+**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 IN PROGRESS · Phase 03–08 menunggu.** Seluruh gate Phase 01 lulus lokal dan di GitHub Actions. Kontrak dan acceptance provisioning awal sudah APPROVED. Entry Phase 02 PASS setelah main tersinkron. Increment provisioning awal dan hardening rotasi sesi lulus gate lokal dan CI. Implementasi ada di Draft PR #3. RBAC tenant-wide RB1–RB6 disetujui dan diimplementasikan. Entitlement online dan Membership Lifecycle existing diimplementasikan untuk scope yang disetujui. Locations Foundation minimal kini berada di Phase 02 sebelum Devices. Devices/PIN menunggu kontrak rinci. Scoped logout S1 diimplementasikan sebagai increment terpisah. [Issue #5](https://github.com/PTKPP/hi-ve/issues/5) · [Issue #6](https://github.com/PTKPP/hi-ve/issues/6) [Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3) [Run Backend](https://github.com/PTKPP/hi-ve/actions/runs/44514611278) · [Issue #2](https://github.com/PTKPP/hi-ve/issues/2)
 
 ## Audit dan exit Phase 00
 
@@ -176,6 +176,15 @@ Usulan LF, DV dan S belum mengubah gate fase atau approval OPEN-011/016. Kerjaka
 | Gate lokal | PASS untuk format, vet, build, race, architecture dan PostgreSQL disposable. Tes mencakup dua tenant, role/sesi yang ditolak, duplicate-key concurrency, unique code race, audit rollback/retry, dan resolver tipe/status. Migrasi fresh/retry/upgrade dan regresi provisioning, RBAC, entitlement serta lifecycle lulus. |
 | Scope terkait | DV1–DV5 diterima sebagai arah desain. Implementasi menunggu parameter keamanan, kontrak Device/Identity serta keputusan OPEN-001/007/008/013 yang relevan. M5 masih mempertahankan FK Google-only dan gate PIN-only. S1 logout scoped-session APPROVED, S2 histori login dan S3 Settings/Audit menunggu review. [Devices/PIN](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7022822632) · [Keputusan S1](https://github.com/PTKPP/hi-ve/issues/9#issuecomment-7022823146) |
 
+## Increment 02.11 · Scoped logout
+
+| Area | Persetujuan dan bukti |
+|---|---|
+| S1 | APPROVED untuk FR-HV-IDN-001/AC-04 pada sesi yang disajikan. POST App/Admin melalui origin guard menghasilkan 204 kosong. Sesi hidup yang cocok dicabut dan diaudit atomik. Hanya cookie sesi tersebut yang dihapus setelah commit. Cookie kosong, kedaluwarsa, sesi sudah dicabut atau konteks lain menjadi no-op 204. [Kontrak S1](https://github.com/PTKPP/hi-ve/issues/9#issuecomment-7022823146) |
+| Scope dan race | Audit 015 tidak menyimpan digest atau token. Identity mengambil lock membership sebelum sesi tenant dan mengecek expiry setelah lock sesi. Logout dan rotasi berurutan pada digest lama. Flow Google yang terautentikasi terpisah dapat membuat sesi baru, dan retry logout lama tidak menyentuh sesi baru atau browser lain. [Panduan scoped sign-out](backend/docs/PROVISIONING.md#scoped-sign-out) |
+| Gate lokal | PASS format, vet, race test, build, architecture guard, actionlint, dan PostgreSQL disposable. Tes mencakup pemisahan Platform/App, tenant isolation, no-op replay/expiry, audit rollback + cookie tetap, dua logout paralel dan race dengan callback OIDC nyata melalui provider fixture. |
+| Sisa Phase 02 | DV1–DV5 tetap arah desain. Approval berikutnya mencakup lifetime/rate-limit pairing, perangkat dan credential lifecycle, perizinan operator/PIN dan keputusan offline yang relevan. S2 histori login online masih perlu cakupan event, field/read permission dan failure policy meski retensi tujuh hari sudah approved. S3 Settings/Audit masih perlu field non-secret, action dan query/retention. OPEN-015 tetap NOT VERIFIED untuk Google, SMTP dan browser target. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -199,3 +208,5 @@ Usulan LF, DV dan S belum mengubah gate fase atau approval OPEN-011/016. Kerjaka
 | 02.6 | Audit schema dan kontrak Entitlement/Membership dilakukan pada HEAD `11b01c8`. Issue #5 dan #6 dibuka setelah cek duplikasi. Phase 02 IN PROGRESS, dua kontrak baru menunggu approval. |
 | 02.7–02.8 | Entitlement online `4221679` dan membership lifecycle + neutral principal Expand `db5d18628d25d527d9c9122ccaf368b04cc7f0d5` dipush sebagai dua commit. Gate lokal dan CI PR/push PASS, termasuk PostgreSQL disposable dan upgrade/backfill. Draft PR #3 tetap terbuka. [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44550890166) · [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44550875675) |
 | 02.9 | Audit menemukan siklus Devices–Locations. Issue #7–9 dibuka untuk review sequencing, kontrak Devices/PIN dan pekerjaan independen. Enforcement FK Google-only lulus uji regresi disposable. Phase 02 tetap IN PROGRESS dan PR #3 tetap draft. |
+| 02.10 | Locations Foundation LF1–LF4 diimplementasikan dan dipush pada `b138f3b6a9acec6b33da3201a839c59cbb1e62d9`. Gate lokal dan CI PR PASS. [CI Locations](https://github.com/PTKPP/hi-ve/actions/runs/44620446698) |
+| 02.11 | Scoped logout S1 diimplementasikan. Migrasi 015, tes concurrency dan rollback audit lulus lokal. Phase 02 tetap IN PROGRESS dan PR #3 tetap draft. [CI HEAD](https://github.com/PTKPP/hi-ve/pull/3/checks) |

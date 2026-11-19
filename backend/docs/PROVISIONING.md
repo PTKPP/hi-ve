@@ -6,7 +6,7 @@ This backend slice implements the approved D1–D5 contract. The issue records t
 
 Run the migration checks on disposable PostgreSQL with the command in [DATABASE.md](DATABASE.md). The script also runs the HTTP provisioning acceptance tests against its temporary database and a local provider with signed OIDC fixtures.
 
-The Go command is `go run ./cmd/api` from `backend/`. Apply the repository migrations through 012 to the authorized development/test target first. Configure the following outside the repository.
+The Go command is `go run ./cmd/api` from `backend/`. Apply the repository migrations through 015 to the authorized development/test target first. Configure the following outside the repository.
 
 | Environment | Purpose |
 | --- | --- |
@@ -26,3 +26,9 @@ Platform login requires an explicitly provisioned Google principal and active Pl
 3. The invited user submits `{"invitation":"<code>"}` to `POST /api/v1/app/owner-claim` and opens the returned Google authorization URL. On a valid callback they receive the claim ID without a tenant session. The operator verifies organizational ownership with a known independent contact, confirms the exact claim ID through that contact, and records an internal verification reference. Use the method identifier `verified-organization-contact` and a non-secret reference.
 4. Activate through `POST /api/v1/admin/tenants/{tenant_id}/activate` using the approved fields and a fresh idempotency key. Platform serializes writes for that tenant. Identity consumes the current verified claim and assigns the Primary Owner. Audit and Platform commit their records in the same transaction. The Owner then signs in through `POST /api/v1/app/tenants/{tenant_id}/login`. `GET /api/v1/app/tenants/{tenant_id}/session` checks that the tenant session and active membership match.
 5. The login callback currently returns 204 for a session and JSON for a claim. UI integration can present the result with an approved navigation flow when the frontend is available. Configure access logs and reverse proxies to omit OAuth callback query parameters and sensitive headers. Recovery, Owner transfer, wider entitlement and device review remain outside this slice.
+
+## Scoped sign-out
+
+Send POST to `/api/v1/admin/logout` from the admin origin or `/api/v1/app/tenants/{tenant_id}/logout` from the App origin. The response is an empty 204. A live matching session is revoked with its audit record before its cookie is cleared. Missing, expired, previously revoked and other-context cookies receive 204 with no cookie change.
+
+Logout targets the exact presented session. A separately authenticated callback may issue a new session, and an old logout retry cannot revoke that session. Serialize logout and a new login in the browser so the browser applies cookie responses in order. A persistence failure preserves the session and its cookie for retry.
