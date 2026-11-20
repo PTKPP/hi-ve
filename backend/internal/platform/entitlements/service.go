@@ -17,8 +17,6 @@ import (
 	"hi-ve/backend/internal/platform"
 )
 
-const catalogProducts = "catalog.products"
-
 var (
 	ErrInput    = errors.New("invalid entitlement input")
 	ErrMissing  = errors.New("entitlement target unavailable")
@@ -59,7 +57,12 @@ type Result struct {
 }
 
 func grantable(capability string) bool {
-	return capability == catalogProducts && platform.IsPilotCapability(capability)
+	switch capability {
+	case "catalog.products", "catalog.pricing":
+		return platform.IsPilotCapability(capability)
+	default:
+		return false
+	}
 }
 
 func (r *Result) at(now time.Time) {

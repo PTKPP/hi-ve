@@ -36,13 +36,21 @@ export async function pairingKey() {
     proof({ pairing_id, nonce, expires_at }, idempotency_key) {
       return sign({ purpose: "hive.device.pair.redeem.v1", pairing_id, nonce, expires_at, idempotency_key });
     },
-    challengeProof({ tenant_id, device_id, operation, context_id, expected_revision }) {
+    challengeProof({ tenant_id, device_id, operation, context_id, expected_revision, command_digest }) {
       return sign({ purpose: "hive.device.challenge.bootstrap.v1", tenant_id, device_id, operation,
-        context_id, expected_revision, request_id: crypto.randomUUID(), issued_at: new Date().toISOString() });
+        context_id, expected_revision, command_digest, request_id: crypto.randomUUID(), issued_at: new Date().toISOString() });
     },
-    operationProof({ challenge_id, nonce, device_revision, expires_at }, { tenant_id, device_id, operation, context_id, expected_revision }) {
+    operationProof({ challenge_id, nonce, device_revision, expires_at }, { tenant_id, device_id, operation, context_id, expected_revision, command_digest }) {
       return sign({ purpose: "hive.device.operation.v1", challenge_id, nonce, device_revision, expires_at,
-        tenant_id, device_id, operation, context_id, expected_revision });
+        tenant_id, device_id, operation, context_id, expected_revision, command_digest });
     },
   };
+}
+
+
+// Pass the same serialized body to fetch and keep the receipt key on retries.
+export async function catalogCommandDigest(method, path, key, body) {
+  const bytes = new TextEncoder().encode([method, path, key, body].join("\n"));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
 }

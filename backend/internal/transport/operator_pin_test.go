@@ -2,22 +2,27 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	"hi-ve/backend/internal/audit"
+	"hi-ve/backend/internal/catalog"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
+	"hi-ve/backend/internal/platform/entitlements"
 )
 
 func TestOperatorPINPostgres(t *testing.T) {
@@ -58,7 +63,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	role := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'operator','Operator') RETURNING id`, tenant)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
-	svc := devices.Service{DB: db, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
+	svc := devices.Service{DB: db, CatalogCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
 		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true}
 	newPIN := func() *identity.PIN {
 		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
@@ -69,6 +74,9 @@ func TestOperatorPINPostgres(t *testing.T) {
 	}
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
+	app.AdminOrigin = adminOrigin
+	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
+	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
@@ -99,6 +107,9 @@ func TestOperatorPINPostgres(t *testing.T) {
 		req := httptest.NewRequest(method, path, bytes.NewReader(data))
 		req.Header.Set("Origin", appOrigin)
 		req.Header.Set("Device-Proof", proof)
+		if method == "PUT" {
+			req.Header.Set("Idempotency-Key", "staff-catalog-command-01")
+		}
 		if session != nil {
 			req.AddCookie(session)
 		}
@@ -237,6 +248,65 @@ func TestOperatorPINPostgres(t *testing.T) {
 		expectStatus(t, send(handler, "GET", base(device)+"/context", proof, nil, cookies[0]), status)
 	}
 	oldRead(200)
+	// Resolve only the device's live outlet. A device assignment alone does not grant price access.
+	product := id(`INSERT INTO hive.catalog_products(tenant_id,id,name,category,revision) VALUES($1,gen_random_uuid(),'A','B',1) RETURNING id`, tenant)
+	sku := id(`INSERT INTO hive.catalog_skus(tenant_id,id,product_id,code,variant,unit,active,batch_tracked,revision)
+        VALUES($1,gen_random_uuid(),$2,'curah','Curah','g',true,true,1) RETURNING id`, tenant, product)
+	exec(`INSERT INTO hive.catalog_prices(tenant_id,sku_id,outlet_id,revision,amount,actor_id)
+        SELECT $1::uuid,$2::uuid,v.outlet,1,v.amount,m.principal_id FROM hive.tenant_memberships m CROSS JOIN
+        (VALUES ($3::uuid,100::numeric),($4::uuid,200::numeric)) v(outlet,amount) WHERE m.tenant_id=$1 AND m.role='primary_owner'`, tenant, sku, outlet, otherOutlet)
+	pricePath := base(device) + "/catalog/skus/" + sku + "/price"
+	readPrice := func(path string) *httptest.ResponseRecorder {
+		rev := previous.Revision
+		proof := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: previous.ID, Revision: &rev})
+		return send(handler, "GET", path, proof, nil, cookies[0])
+	}
+	pricingAdmin := entitlementAdminFixture(t, db, "operator-pricing-admin")
+	grantPath := "/api/v1/admin/tenants/" + tenant + "/entitlements/catalog.pricing"
+	pricingNow := time.Now().UTC()
+	expectStatus(t, accessRequest(handler, "PUT", grantPath, adminOrigin, "operator-pricing-grant",
+		pricingGrant(0, pricingNow.Add(-time.Hour), pricingNow.Add(time.Hour)), pricingAdmin), 200)
+	expectStatus(t, readPrice(pricePath), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'catalog.pricing.read')`, tenant, role)
+	expectStatus(t, readPrice(pricePath+"?outlet_id="+otherOutlet), 400)
+	priced := readPrice(pricePath)
+	expectStatus(t, priced, 200)
+	var fields map[string]any
+	if err := json.Unmarshal(priced.Body.Bytes(), &fields); err != nil || len(fields) != 4 || fields["amount"] != "100" || fields["price_id"] == nil || fields["revision"] != float64(1) || fields["updated_at"] == nil {
+		t.Fatal("unexpected operator price projection")
+	}
+	expectStatus(t, accessRequest(handler, "POST", grantPath+"/revoke", adminOrigin, "operator-pricing-revoke",
+		map[string]any{"revision": 1, "reason_code": "administrative_revocation"}, pricingAdmin), 200)
+	expectStatus(t, readPrice(pricePath), 403)
+	expectStatus(t, accessRequest(handler, "PUT", grantPath, adminOrigin, "operator-pricing-regrant",
+		pricingGrant(2, pricingNow.Add(-time.Hour), pricingNow.Add(time.Hour)), pricingAdmin), 200)
+	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='catalog.pricing.read'`, tenant, role)
+	expectStatus(t, readPrice(pricePath), 403)
+
+	// Management requires a tenant role as well as the live operational context.
+	staffPath := base(device) + "/catalog/products/" + id("SELECT gen_random_uuid()")
+	body := map[string]any{"revision": 0, "name": "Madu staf", "category": "Pangan"}
+	raw, _ := json.Marshal(body)
+	digest := commandDigest("PUT", staffPath, "staff-catalog-command-01", raw)
+	command := func() string {
+		return challenge(device, devices.OperationTarget{Operation: "catalog.products.write", ContextID: previous.ID, Revision: &previous.Revision, CommandDigest: digest})
+	}
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+	exec(`INSERT INTO hive.tenant_role_actions VALUES($1,$2,'catalog.products.manage')`, tenant, role)
+	exec(`INSERT INTO hive.tenant_role_assignments VALUES($1,$2,$3)`, tenant, member, role)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+	exec(`INSERT INTO hive.tenant_entitlements VALUES($1,'catalog.products',now(),now()+interval '1 day','fixture',NULL,1)`, tenant)
+	appPricePath := "/api/v1/app/tenants/" + tenant + "/catalog/skus/" + sku + "/price"
+	expectStatus(t, accessRequest(handler, "PUT", appPricePath, appOrigin, "operator-price-write",
+		map[string]any{"revision": 0, "amount": "99"}, cookies[0]), 401)
+	signed := command()
+	expectStatus(t, send(handler, "PUT", staffPath, signed, map[string]any{"revision": 0, "name": "Lain", "category": "Pangan"}, cookies[0]), 401)
+	expectStatus(t, send(handler, "PUT", staffPath, signed, body, cookies[0]), 200)
+	expectStatus(t, send(handler, "PUT", staffPath, signed, body, cookies[0]), 401)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 200)
+	exec(`DELETE FROM hive.tenant_role_assignments WHERE tenant_id=$1 AND principal_id=$2 AND role_id=$3`, tenant, member, role)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)
 	rev := previous.Revision
@@ -301,6 +371,72 @@ func TestOperatorPINPostgres(t *testing.T) {
 		t.Fatal("deactivation and issuance left a live context")
 	}
 
+	// Start two live contexts in reverse lock order to cover cancellation racing
+	// for the same member's contexts across devices.
+	freshMember := makeMember("pin-outlet-lifecycle", "456789")
+	orderedDevices := []string{device, otherDevice}
+	slices.Sort(orderedDevices)
+	var fresh *httptest.ResponseRecorder
+	for _, deviceID := range []string{orderedDevices[1], orderedDevices[0]} {
+		var revision int64
+		if err := db.QueryRow(ctx, `SELECT context_revision FROM hive.devices WHERE tenant_id=$1 AND id=$2`, tenant, deviceID).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		response := login(deviceID, outlet, freshMember, "456789", revision, 201)
+		if deviceID == device {
+			fresh = response
+		}
+	}
+	var active devices.OperationalContext
+	if err := json.Unmarshal(fresh.Body.Bytes(), &active); err != nil {
+		t.Fatal(err)
+	}
+	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: func(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
+		// A heap scan encounters the two fixtures in insertion order.
+		if _, err := tx.Exec(ctx, `SET LOCAL enable_indexscan=off; SET LOCAL enable_bitmapscan=off`); err != nil {
+			return err
+		}
+		return svc.EndOutletContexts(ctx, tx, tenant, outlet)
+	}}
+	first, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Rollback(ctx)
+	if _, err = first.Exec(ctx, `SELECT id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND device_id=$2 AND ended_at IS NULL FOR UPDATE`, tenant, orderedDevices[0]); err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	go func() {
+		revision := int64(0)
+		_, err := loc.SetStatus(ctx, tenant, owner.Value, outlet, "location-state-inactive", locations.StatusInput{Status: "inactive", Revision: &revision})
+		ended <- err
+	}()
+	waitForBlocked(t, db, first.Conn().PgConn().PID())
+	// With consistent ordering the outlet writer waits for the first context
+	// before it can lock the second one.
+	if _, err = first.Exec(ctx, `SELECT id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND device_id=$2 AND ended_at IS NULL FOR UPDATE NOWAIT`, tenant, orderedDevices[1]); err != nil {
+		t.Fatal("outlet cancellation acquired context locks out of order", err)
+	}
+	if err = first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-ended; err != nil {
+		t.Fatal(err)
+	}
+	if count := id(`SELECT count(*)::text FROM hive.operational_contexts WHERE tenant_id=$1 AND outlet_id=$2 AND ended_at IS NULL`, tenant, outlet); count != "0" {
+		t.Fatal("deactivation left an active context")
+	}
+	for revision, status := range []string{"inactive", "active"} {
+		rev := int64(revision)
+		if _, err := loc.SetStatus(ctx, tenant, owner.Value, outlet, "location-state-"+status, locations.StatusInput{Status: status, Revision: &rev}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	afterRestore := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: active.ID, Revision: &active.Revision})
+	expectStatus(t, send(handler, "GET", base(device)+"/context", afterRestore, nil, fresh.Result().Cookies()[0]), 401)
 	exec(`UPDATE hive.operator_login_history SET occurred_at=statement_timestamp()-interval '168 hours' WHERE tenant_id=$1`, tenant)
 	expired := accessRequest(handler, "GET", "/api/v1/app/tenants/"+tenant+"/operator-login-history", appOrigin, "", nil, owner)
 	expectStatus(t, expired, 200)

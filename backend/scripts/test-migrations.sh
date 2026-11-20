@@ -63,6 +63,37 @@ migrate hive_test migrations
 expect_sql hive_test "$version" "$latest"
 printf 'PASS: fresh migration and retry\n'
 
+# Exercise every ordered pair. Exact numeric equality also checks tiny fractions
+# and integers beyond the exact range of binary floating point.
+sql hive_test "DO \$\$ DECLARE
+    src hive.catalog_unit; dst hive.catalog_unit; converted numeric;
+    quantity constant numeric := 9007199254740993.000000000000000000001;
+BEGIN
+    BEGIN
+        PERFORM hive.catalog_quantity('1e-16383'::numeric,'g','kg');
+        RAISE EXCEPTION 'conversion silently rounded to zero';
+    EXCEPTION WHEN numeric_value_out_of_range THEN NULL;
+    END;
+    FOREACH src IN ARRAY enum_range(NULL::hive.catalog_unit) LOOP
+        FOREACH dst IN ARRAY enum_range(NULL::hive.catalog_unit) LOOP
+            IF src=dst OR (src IN ('g','kg') AND dst IN ('g','kg')) OR (src IN ('mL','L') AND dst IN ('mL','L')) THEN
+                converted := hive.catalog_quantity(quantity,src,dst);
+                IF converted <> quantity * (CASE WHEN src=dst THEN 1 WHEN src IN ('kg','L') THEN 1000 ELSE 0.001 END)
+                    OR hive.catalog_quantity(converted,dst,src) <> quantity THEN
+                    RAISE EXCEPTION 'inexact unit conversion';
+                END IF;
+            ELSE
+                BEGIN
+                    PERFORM hive.catalog_quantity(quantity,src,dst);
+                    RAISE EXCEPTION 'cross-dimension conversion';
+                EXCEPTION WHEN invalid_parameter_value THEN NULL;
+                END;
+            END IF;
+        END LOOP;
+    END LOOP;
+END \$\$"
+printf 'PASS: exact Catalog conversions and dimension guards for all 25 unit pairs\n'
+
 source scripts/audit-retention-checks.sh
 sql hive_test 'CREATE DATABASE hive_retention'
 migrate hive_retention migrations
@@ -300,8 +331,14 @@ printf 'PASS: upgrade 027 to device bootstrap preserves existing sessions\n'
 cp migrations/029_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 29
+cp migrations/0{30..36}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 36
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
+    ON (n.tenant_id,n.location_id)=(l.tenant_id,l.id) WHERE l.code='existing' AND l.revision=0" 1
+printf 'PASS: upgrade from Phase 02 preserves outlet IDs and backfills their inventory mapping\n'
 legacy_fk="SELECT count(*) FROM pg_constraint WHERE conrelid='hive.tenant_memberships'::regclass
     AND conname='tenant_memberships_principal_id_fkey'"
 expect_sql hive_online_upgrade "$legacy_fk" 0
@@ -312,4 +349,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'

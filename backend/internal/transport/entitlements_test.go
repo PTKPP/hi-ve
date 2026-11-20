@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/platform/entitlements"
 )
@@ -27,17 +29,9 @@ func TestEntitlementPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`WITH principal AS (
-		INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com','entitlement-platform') RETURNING id
-	), admin AS (INSERT INTO hive.platform_principals(principal_id) SELECT id FROM principal RETURNING principal_id)
-	INSERT INTO hive.platform_sessions SELECT $1,principal_id,clock_timestamp()+interval '1 hour' FROM admin`, identity.Digest("entitlement-admin"))
-	exec(`INSERT INTO hive.platform_permissions SELECT a.principal_id, p.permission
-		FROM hive.platform_principals a JOIN hive.google_principals g ON g.id=a.principal_id
-		CROSS JOIN (VALUES ('platform.entitlements.read'),('platform.entitlements.grant'),('platform.entitlements.revoke')) p(permission)
-		WHERE g.subject='entitlement-platform'`)
+	token := entitlementAdminFixture(t, db, "entitlement-admin")
 	s := entitlements.Service{DB: db, FingerprintKey: bytes.Repeat([]byte{4}, 32)}
 	h := API{Entitlements: s, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
-	token := &http.Cookie{Name: platformCookie, Value: "entitlement-admin"}
 	const capability = "catalog.products"
 	path := "/api/v1/admin/tenants/" + tenant + "/entitlements/" + capability
 	call := func(method, path, key string, input any) *httptest.ResponseRecorder {
@@ -132,4 +126,27 @@ func TestEntitlementPostgres(t *testing.T) {
 	if !errors.Is(s.Check(ctx, tenant, capability), entitlements.ErrDenied) {
 		t.Fatal("expiry left access open")
 	}
+}
+
+func entitlementAdminFixture(t *testing.T, db *pgxpool.Pool, label string) *http.Cookie {
+	t.Helper()
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(t.Context(), query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`WITH principal AS (
+		INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com',$2) RETURNING id
+	), admin AS (INSERT INTO hive.platform_principals(principal_id) SELECT id FROM principal RETURNING principal_id)
+	INSERT INTO hive.platform_sessions SELECT $1,principal_id,clock_timestamp()+interval '1 hour' FROM admin`, identity.Digest(label), label)
+	exec(`INSERT INTO hive.platform_permissions SELECT a.principal_id, p.permission
+		FROM hive.platform_principals a JOIN hive.google_principals g ON g.id=a.principal_id
+		CROSS JOIN (VALUES ('platform.entitlements.read'),('platform.entitlements.grant'),('platform.entitlements.revoke')) p(permission)
+		WHERE g.subject=$1`, label)
+	return &http.Cookie{Name: platformCookie, Value: label}
+}
+
+func pricingGrant(revision int, effective, expiry time.Time) map[string]any {
+	return map[string]any{"revision": revision, "effective_at": effective, "expires_at": expiry, "source_reference": "pricing-approval"}
 }

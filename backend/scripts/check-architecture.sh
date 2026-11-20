@@ -20,9 +20,9 @@ awk '
     $2 !~ /^hi-ve\/backend\// { next }
     $1 == "hi-ve/backend/cmd/audit-retention" && $2 == "hi-ve/backend/internal/audit" { next }
     $1 == "hi-ve/backend/cmd/api" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|settings|platform\/(entitlements|provisioning))$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
     $1 == "hi-ve/backend/internal/platform/entitlements" &&
