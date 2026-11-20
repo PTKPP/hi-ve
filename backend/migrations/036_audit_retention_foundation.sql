@@ -93,6 +93,10 @@ BEGIN
     IF p_batch IS NULL OR p_batch < 1 OR p_batch > 1000 THEN
         RAISE EXCEPTION 'invalid purge batch size' USING ERRCODE = '22023';
     END IF;
+    -- Recheck holds against a fresh snapshot after acquiring the hold table lock.
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'audit retention requires READ COMMITTED' USING ERRCODE = '25000';
+    END IF;
     IF pg_is_in_recovery() THEN
         RETURN QUERY SELECT 'refused'::text, 'replica'::text, 0::bigint;
         RETURN;

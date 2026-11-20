@@ -51,6 +51,13 @@ audit_retention_checks() {
     ar_run "$db" "SET ROLE hive_ar_ops; INSERT INTO hive.audit_legal_holds(scope,tenant_id,reason_code)
         SELECT 'tenant',id,'ar.hold-b' FROM hive.tenants WHERE display_name='ar-b'"
 
+    # A fixed transaction snapshot cannot observe a newly committed hold after waiting.
+    local level
+    for level in 'REPEATABLE READ' 'SERIALIZABLE'; do
+        ar_expect_error "$db" 25000 "BEGIN ISOLATION LEVEL $level; SET ROLE hive_ar_retention;
+            SELECT pg_current_snapshot(); SELECT * FROM hive.purge_critical_audit('provisioning_audit',2,false)"
+    done
+
     # Positive: a dry run reports the eligible rows, deletes nothing and writes the ledger.
     [[ $(run_purge 500 false) == 'ok/completed/3' ]]
     expect_sql "$db" "$count_a" 3
