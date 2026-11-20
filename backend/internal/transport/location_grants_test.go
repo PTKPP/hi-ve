@@ -68,6 +68,26 @@ func TestLocationGrantsPostgres(t *testing.T) {
 	expectStatus(t, request("PUT", assignPath, "scoped-warehouse", assign(1, warehouse), owner), 404)
 	expectStatus(t, request("PUT", assignPath, "scoped-outlet-key", assign(1, outlet), owner), 200)
 	expectStatus(t, request("PUT", assignPath, "scoped-outlet-key", assign(1, outlet), owner), 200)
+
+	assertGrantEvent := func(revision int, removed bool) {
+		t.Helper()
+		var count int
+		err := db.QueryRow(ctx, `SELECT count(*) FROM hive.tenant_rbac_audit
+          WHERE tenant_id=$1 AND target_id=$2 AND action='membership.location_roles.replace'
+            AND revision=$3 AND occurred_at IS NOT NULL AND id IS NOT NULL
+            AND actor_id=(SELECT principal_id FROM hive.tenant_memberships WHERE tenant_id=$1 AND role='primary_owner')
+            AND before_state=CASE WHEN $4::bool THEN jsonb_build_array(jsonb_build_object('role_id',$5::text,'location_id',$6::text)) ELSE '[]'::jsonb END
+            AND after_state=CASE WHEN $4::bool THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('role_id',$5::text,'location_id',$6::text)) END`,
+			tenant, member, revision, removed, role, outlet).Scan(&count)
+		if err != nil || count != 1 {
+			t.Fatalf("location assignment audit revision %d: count=%d err=%v", revision, count, err)
+		}
+	}
+	assertGrantEvent(2, false)
+	var auditRows int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM hive.tenant_rbac_audit WHERE tenant_id=$1 AND action='membership.location_roles.replace'`, tenant).Scan(&auditRows); err != nil || auditRows != 1 {
+		t.Fatalf("assignment replay wrote an extra event: %d %v", auditRows, err)
+	}
 	forbid := func(id string) error {
 		return pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
 			return identity.AuthorizeLocationGrant(ctx, tx, tenant, member, id, identity.DeviceOperatorUse)
@@ -81,6 +101,18 @@ func TestLocationGrantsPostgres(t *testing.T) {
 	}
 	exec(`CREATE FUNCTION hive.test_scoped_audit_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture'; END $$;
  CREATE TRIGGER test_scoped_audit_fail BEFORE INSERT ON hive.tenant_rbac_audit FOR EACH ROW EXECUTE FUNCTION hive.test_scoped_audit_fail()`)
+
+	expectStatus(t, request("PUT", assignPath, "scoped-assignment-audit-fault", map[string]any{
+		"expected_revision": 2, "assignments": []identity.LocationAssignment{},
+	}, owner), 503)
+	var remaining int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM hive.tenant_location_role_assignments WHERE tenant_id=$1 AND member_id=$2 AND location_id=$3`, tenant, member, outlet).Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("audit failure modified existing assignment: %d %v", remaining, err)
+	}
+	var revision int
+	if err := db.QueryRow(ctx, `SELECT revision FROM hive.tenant_rbac_revisions WHERE tenant_id=$1`, tenant).Scan(&revision); err != nil || revision != 2 {
+		t.Fatalf("audit failure modified assignment revision: %d %v", revision, err)
+	}
 	expectStatus(t, request("PUT", actionPath, "scoped-revoke-key", action(2), owner), 503)
 	exec(`DROP TRIGGER test_scoped_audit_fail ON hive.tenant_rbac_audit`)
 	if err := forbid(outlet); err != nil {
@@ -106,6 +138,7 @@ func TestLocationGrantsPostgres(t *testing.T) {
 	}
 	expectStatus(t, request("PUT", actionPath, "scoped-stale-action", action(2, identity.DeviceOperatorUse), owner), 409)
 	expectStatus(t, request("POST", base+"/members/"+member+"/deactivate", "scoped-deactivate", map[string]any{"revision": 0, "reason_code": "administrative_action"}, owner), 200)
+	assertGrantEvent(4, true)
 	var count int
 	if err = db.QueryRow(ctx, `SELECT count(*) FROM hive.tenant_location_role_assignments WHERE tenant_id=$1`, tenant).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("scoped grants survived deactivate: %v %d", err, count)

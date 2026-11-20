@@ -53,6 +53,7 @@ type API struct {
 	Settings               settings.Service
 	Devices                devices.Service
 	LoginHistory           audit.LoginHistory
+	AccessControlAudit     audit.AccessControlReader
 	Google                 Google
 	AdminOrigin, AppOrigin string
 	Deliver                func(context.Context, provisioning.Delivery) error
@@ -70,6 +71,7 @@ func (a API) Handler() http.Handler {
 	a.operationalRoutes(mux)
 	a.receiptRoutes(mux)
 	a.loginHistoryRoutes(mux)
+	a.accessControlAuditRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/owner-invitation", a.admin(a.reissue))

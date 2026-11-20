@@ -88,10 +88,11 @@ func run(ctx context.Context) error {
 		deviceService.PIN = staffPIN
 	}
 	api := transport.API{StaffPIN: staffPIN, Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
-		LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
-		Devices:      deviceService,
-		Settings:     settings.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
-		Locations:    locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, StaffPINSchema: version >= 31, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
+		LoginHistory:       audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
+		AccessControlAudit: audit.AccessControlReader{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, TenantLocationIDs: locations.TenantLocationIDs},
+		Devices:            deviceService,
+		Settings:           settings.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
+		Locations:          locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, StaffPINSchema: version >= 31, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8080"

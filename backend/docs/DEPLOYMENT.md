@@ -70,6 +70,10 @@ Backend membuka rute DV3 hanya saat schema minimal 035 dan pepper online dikonfi
 - Konfigurasi seluruh variabel PIN kosong menutup rute DV3. Lifecycle dan cleanup histori tetap berjalan pada schema kompatibel. Untuk rollback binary, tutup akses DV3 dan akhiri konteks operator yang pernah diterbitkan sebelum memakai binary sebelumnya. Pertahankan schema aditif, UUID netral dan histori. Gunakan baseline rollback yang kompatibel dengan M5.
 - Eksekusi pada target persisten mengikuti persetujuan terpisah. Verifikasi role database, key distribution, sumber direct peer, kapasitas Argon2id, Origin/cookie, dan browser target pada gate OPEN-015.
 
+## Privilege reader audit perubahan grant lokasi
+
+API `GET /api/v1/app/tenants/{tenant_id}/audit/sensitive-events` memakai kategori `access_control` dan sesi Google Primary Owner aktif. Role aplikasi memerlukan `SELECT` pada `hive.tenant_rbac_audit` untuk proyeksi dan tetap memakai `INSERT` untuk producer Identity. Pemilik tabel adalah role migrasi. Verifikasi privilege efektif termasuk role yang diwarisi agar runtime aplikasi tidak memiliki `UPDATE`, `DELETE`, `TRUNCATE` atau hak kepemilikan tabel. Reader memakai privilege baca Identity dan Locations yang tersedia untuk pemeriksaan scope. Uji PostgreSQL disposable memakai role runtime terpisah untuk operasi baca dan tulis audit. Persetujuan OPEN-006 tetap diperlukan untuk retensi dan purge audit kritis.
+
 ## Desain production di Proxmox
 
 | Komponen | Desain |

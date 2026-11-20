@@ -154,3 +154,13 @@ func LockActiveOutlets(ctx context.Context, tx pgx.Tx, tenant string, ids []stri
 	}
 	return count == len(ids) && count > 0, rows.Err()
 }
+
+// TenantLocationIDs resolves historical location references for an already
+// authorized tenant-wide reader. Inactive locations remain in tenant history.
+func TenantLocationIDs(ctx context.Context, tx pgx.Tx, tenant string, ids []string) ([]string, error) {
+	rows, err := tx.Query(ctx, `SELECT id::text FROM hive.locations WHERE tenant_id=$1 AND id=ANY($2::text[]::uuid[])`, tenant, ids)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
