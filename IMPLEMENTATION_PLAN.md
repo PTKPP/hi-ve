@@ -326,6 +326,18 @@ Persetujuan eksplisit mencakup promosi source 029. Pernyataan SQL identik dengan
 | Schema dan kapasitas | M5 029 **PASS sebagai baseline disposable** untuk membership netral. Schema 029 belum menyimpan credential, lease atau histori PIN. Konfirmasi diperlukan untuk migrasi aditif di atas 029. Preflight Compose tetap membatasi 001–028. Probe sintetis lokal Argon2id 19 MiB/t2/p1 menghasilkan p95 57 ms pada dua worker dan empat CPU logis. Kapasitas API, browser, key provisioning, TLS dan trusted proxy pada target belum terverifikasi. |
 | Next action dan dependensi | Setelah persetujuan, mulai dari onboarding/credential dan audit Owner, lalu discovery/admission, kemudian sesi operator dan histori PIN. Gate uji setiap increment memakai PostgreSQL disposable dan CI. OPEN-001/006/007/008/013/015 tetap OPEN pada scope masing-masing. Issue #8 tetap OPEN dan status PR tidak diubah dalam review ini. |
 
+## Increment 02.27–02.29 · Implementasi DV3 PIN-only online
+
+DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai baseline PostgreSQL disposable dan migrasi aditif 030–035. PR #3 dikembalikan ke Draft di branch `feat/phase-02-platform`. Phase 02 tetap IN PROGRESS. [Issue #8](https://github.com/PTKPP/hi-ve/issues/8) · [PR #3](https://github.com/PTKPP/hi-ve/pull/3)
+
+| Increment dan cakupan | SHA dan bukti |
+|---|---|
+| 02.27 · PIN1/PIN2 · FR-HV-IDN-002/AC-01 dan FR-HV-USR-001/AC-01–04 | `92aea54`. Profil staf netral, idempotency create, PIN Owner-only, Argon2id dan pepper berversi, reset berbasis revision serta audit atomik. Deactivation mencabut konteks dan credential, dan reactivation memerlukan PIN baru, grant dan assignment baru. |
+| 02.28 · PIN3 · FR-HV-PIN-001/AC-01/03 bagian online, FR-HV-OPR-001/AC-01 dan FR-HV-ACL-001/AC-01–03 | `7b434b6`. Discovery dari irisan assignment dan grant lokasi, proof ES256 satu kali, budget perangkat/direct peer, lease lintas replica dan lockout anggota. Promosi schema mempertahankan proof DV2 existing. |
+| 02.29 · PIN3/PIN4 · FR-HV-IDN-002/AC-03, FR-HV-OPR-001/AC-02/03 bagian konteks dan histori, FR-HV-AUD-001/AC-01/02/04/05 bagian online | `ed3e83f` dan checkpoint verifikasi. Session operator nyata, switch operator pada outlet yang sama, audit sukses atomik, denial dengan counter tetap berlaku saat audit gagal, pembacaan Owner dan cleanup histori 168 jam. Credential diikat pada lifecycle revision untuk mencegah PIN lama kembali setelah perubahan oleh binary rollback. Tes mencakup proof replay, tenant isolation, lockout lintas replica, audit rollback, late logout serta deactivation bersamaan dengan issuance. |
+| Kualitas dan kompatibilitas | **PASS lokal** untuk format, vet, build, race, architecture guard, preflight Compose 028, schema fresh/upgrade melalui 029 ke 035, regresi PostgreSQL disposable, dan rehearsal M5 lintas binary. CI dua SHA awal menemukan asumsi fixture M5 bahwa rantai berakhir di 029. Fixture diperbaiki untuk memasang subset 001–029 khusus rehearsal. Bukti GitHub Actions per HEAD tersedia pada [checks PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks). |
+| Batas dan next action | Rute DV3 memerlukan schema minimal 035 dan konfigurasi pepper. Compose development tetap maksimal 028. OPEN-001/006/007/008/013/015 tetap OPEN, termasuk kesiapan browser, TLS, trusted proxy, kapasitas dan rotasi secret pada target. Issue #8 tetap OPEN untuk scope yang tersisa. Final Audit mengikuti exit criteria Phase 02. [Runbook](backend/docs/DEPLOYMENT.md) |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -363,3 +375,4 @@ Persetujuan eksplisit mencakup promosi source 029. Pernyataan SQL identik dengan
 | 02.24 | Kandidat M5 029 dan rehearsal native lintas versi lulus di PostgreSQL disposable. Migrasi utama tetap 028. Promosi kandidat menunggu review/persetujuan. |
 | 02.25 | Promosi source 029 disetujui. Preflight Compose menahan schema development pada 028. Rehearsal dan validasi schema 029 hanya pada PostgreSQL disposable. |
 | 02.26 | Kontrak DV3 online dipublikasikan pada Issue #8. NO-GO implementasi sampai DV3-PIN1–PIN4 dan batas schema aditif disetujui. |
+| 02.27–02.29 | DV3 online diimplementasikan bertahap pada PR #3 Draft. Validasi dan batas skema dicatat. Outlet switching, offline dan verifikasi target tetap OPEN. |

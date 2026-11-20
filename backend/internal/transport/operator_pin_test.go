@@ -69,6 +69,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	}
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
+	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
 	replica.Devices.PIN = newPIN()
@@ -273,6 +274,24 @@ func TestOperatorPINPostgres(t *testing.T) {
 	if successes != 1 {
 		t.Fatalf("competing issuance returned %d successes", successes)
 	}
+	// Either the refresh commits before deactivation and is revoked, or
+	// deactivation commits first and the narrowly scoped login is refused.
+	proof, input := loginRequest(otherDevice, outlet, member, "012345", 1)
+	deactivate := "/api/v1/app/tenants/" + tenant + "/members/" + member + "/deactivate"
+	lifecycle := map[string]any{"revision": 0, "reason_code": "administrative_action"}
+	mutation := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		mutation <- accessRequest(handler, "POST", deactivate, appOrigin, "dv3-live-deactivation", lifecycle, owner)
+	}()
+	raced := send(otherHandler, "POST", base(otherDevice)+"/context", proof, input, nil)
+	if raced.Code != 201 && raced.Code != 401 {
+		t.Fatalf("unexpected login/lifecycle ordering: %d", raced.Code)
+	}
+	expectStatus(t, <-mutation, 200)
+	if count := id("SELECT count(*)::text FROM hive.operational_contexts WHERE tenant_id=$1 AND member_id=$2 AND ended_at IS NULL", tenant, member); count != "0" {
+		t.Fatal("deactivation and issuance left a live context")
+	}
+
 	exec(`UPDATE hive.operator_login_history SET occurred_at=statement_timestamp()-interval '168 hours' WHERE tenant_id=$1`, tenant)
 	expired := accessRequest(handler, "GET", "/api/v1/app/tenants/"+tenant+"/operator-login-history", appOrigin, "", nil, owner)
 	expectStatus(t, expired, 200)
