@@ -63,6 +63,11 @@ migrate hive_test migrations
 expect_sql hive_test "$version" "$latest"
 printf 'PASS: fresh migration and retry\n'
 
+source scripts/audit-retention-checks.sh
+sql hive_test 'CREATE DATABASE hive_retention'
+migrate hive_retention migrations
+audit_retention_checks hive_retention
+
 sql hive_test 'CREATE DATABASE hive_upgrade'
 migrate hive_upgrade "$scratch/previous"
 expect_sql hive_upgrade "$version" 1

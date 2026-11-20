@@ -74,6 +74,17 @@ Backend membuka rute DV3 hanya saat schema minimal 035 dan pepper online dikonfi
 
 API `GET /api/v1/app/tenants/{tenant_id}/audit/sensitive-events` memakai kategori `access_control` dan sesi Google Primary Owner aktif. Role aplikasi memerlukan `SELECT` pada `hive.tenant_rbac_audit` untuk proyeksi dan tetap memakai `INSERT` untuk producer Identity. Pemilik tabel adalah role migrasi. Verifikasi privilege efektif termasuk role yang diwarisi agar runtime aplikasi tidak memiliki `UPDATE`, `DELETE`, `TRUNCATE` atau hak kepemilikan tabel. Reader memakai privilege baca Identity dan Locations yang tersedia untuk pemeriksaan scope. Uji PostgreSQL disposable memakai role runtime terpisah untuk operasi baca dan tulis audit. Persetujuan OPEN-006 tetap diperlukan untuk retensi dan purge audit kritis.
 
+## Retensi audit kritis (OPEN-006, schema 036)
+
+Migrasi 036 bersifat aditif: indeks `occurred_at`, tabel kebijakan, legal hold, ledger purge, trigger append-only dan fungsi `hive.purge_critical_audit`. Kebijakan 24 bulan **nonaktif** (`enabled=false`) dan migrasi tidak menghapus data. Compose development tetap maksimal 028. Uji hanya pada PostgreSQL disposable (`scripts/audit-retention-checks.sh`). Aktivasi di target memerlukan validasi Security/Ops, legal dan OPEN-015, serta persetujuan terpisah.
+
+| Aspek | Prosedur untuk target |
+|---|---|
+| Role | Role runtime API tidak diberi `UPDATE/DELETE/TRUNCATE` pada tabel audit. Buat role login retention terpisah yang hanya mendapat `USAGE` schema `hive` dan `EXECUTE` pada `hive.purge_critical_audit(text,integer,boolean)`. Fungsi dimiliki role migrasi. Opsi yang disarankan: pindahkan kepemilikan fungsi ke role `NOLOGIN` khusus dengan `DELETE` hanya pada tabel audit kritis. Trigger membaca pemilik fungsi secara dinamis. Role ops legal hold hanya mendapat `INSERT/SELECT` pada tabel hold dan release serta `SELECT` pada `tenants`. |
+| Operasi | Jalankan fungsi per tabel dan per batch (maksimum 1000), mulai dengan mode hitung-saja (`p_apply=false`) dan tinjau ledger `hive.audit_purge_runs`. Penghapusan nyata hanya setelah `enabled=true` untuk tabel itu disetujui. Hasil `refused` dengan alasan `disabled`, `legal_hold_global`, `clock_backwards`, `purge_fraction_exceeded`, `policy_invalid`, `replica` atau `busy` berarti tidak ada baris yang dihapus. |
+| Legal hold | Pasang dengan `INSERT` ke `audit_legal_holds` (tenant atau global) dan lepas dengan `INSERT` ke `audit_legal_hold_releases`. Keduanya append-only. Hold tidak mengembalikan baris yang sudah dipurge sebelumnya. Baris tanpa `tenant_id` hanya dilindungi hold global. |
+| Risiko residual | Pemilik tabel atau superuser dapat menonaktifkan trigger. Pembatasan kepemilikan dan audit akses DDL menjadi tanggung jawab Security/Ops. Backup tetap memuat baris yang sudah dipurge sampai jendela backup berakhir. |
+
 ## Desain production di Proxmox
 
 | Komponen | Desain |
