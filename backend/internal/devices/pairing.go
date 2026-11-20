@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"hi-ve/backend/internal/audit"
+	"hi-ve/backend/internal/identity"
 )
 
 var (
@@ -33,6 +34,7 @@ var (
 
 type Service struct {
 	DB                 *pgxpool.Pool
+	PIN                *identity.PIN
 	CodeKey            []byte
 	PreviousCodeKey    []byte
 	RateKey            []byte

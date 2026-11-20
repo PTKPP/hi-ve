@@ -8,6 +8,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -33,6 +34,7 @@ type PIN struct {
 	current     int
 	keys        map[int][]byte
 	slots       chan struct{}
+	deviceJobs  sync.Map
 	endContexts func(context.Context, pgx.Tx, string, string) error
 }
 

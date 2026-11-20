@@ -83,6 +83,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if version >= 32 {
+		deviceService.PIN = staffPIN
+	}
 	api := transport.API{StaffPIN: staffPIN, Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
 		LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
 		Devices:      deviceService,

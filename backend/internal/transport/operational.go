@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 
 	"hi-ve/backend/internal/devices"
 )
@@ -12,6 +13,9 @@ const operatorCookie = "__Host-hive-operator"
 
 func (a API) operationalRoutes(mux *http.ServeMux) {
 	const base = "/api/v1/operator/tenants/{tenant_id}/devices/{device_id}"
+	if a.Devices.PIN != nil {
+		mux.HandleFunc("GET "+base+"/profiles", a.origin(a.AppOrigin, a.operatorProfiles))
+	}
 	mux.HandleFunc("OPTIONS /api/v1/operator/{rest...}", a.origin(a.AppOrigin, preflight))
 	mux.HandleFunc("POST "+base+"/challenges", a.origin(a.AppOrigin, a.operationChallenge))
 	mux.HandleFunc("GET "+base+"/state", a.origin(a.AppOrigin, a.useOperation("state")))
@@ -87,4 +91,21 @@ func (a API) replaceOperators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, result)
+}
+
+func (a API) operatorProfiles(w http.ResponseWriter, r *http.Request) {
+	tenant, device, outlet, after := r.PathValue("tenant_id"), r.PathValue("device_id"), r.URL.Query().Get("outlet_id"), r.URL.Query().Get("page_after")
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || !uuid.MatchString(tenant) || !uuid.MatchString(device) || !uuid.MatchString(outlet) ||
+		(after != "" && !uuid.MatchString(after)) || len(query["outlet_id"]) != 1 || len(query["page_after"]) > 1 ||
+		len(query) > 1+len(query["page_after"]) {
+		deviceError(w, devices.ErrInput)
+		return
+	}
+	page, err := a.Devices.Profiles(r.Context(), tenant, device, outlet, after, r.Header.Get("Device-Proof"))
+	if err != nil {
+		deviceError(w, err)
+		return
+	}
+	respond(w, 200, page)
 }

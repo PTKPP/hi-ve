@@ -167,6 +167,9 @@ func (s Service) EndMemberContexts(ctx context.Context, tx pgx.Tx, tenant, membe
 
 type OperationTarget struct {
 	Operation string `json:"operation"`
+	Outlet    string `json:"outlet_id,omitempty"`
+	Member    string `json:"member_id,omitempty"`
+	After     string `json:"page_after,omitempty"`
 	ContextID string `json:"context_id,omitempty"`
 	Revision  *int64 `json:"expected_revision,omitempty"`
 }
@@ -197,8 +200,7 @@ const bootstrapLifetime = 30 * time.Second
 
 func (s Service) StartOperation(ctx context.Context, tenant, device string, peer netip.Addr, target OperationTarget, proof string) (OperationChallenge, error) {
 	var result OperationChallenge
-	valid := target.Operation == "state" && target.ContextID == "" && target.Revision == nil ||
-		(target.Operation == "context.read" || target.Operation == "context.logout") && outletID.MatchString(target.ContextID) && target.Revision != nil && *target.Revision > 0
+	valid := validOperationTarget(target, s.PIN != nil)
 	if !valid || !peer.IsValid() {
 		return result, ErrInput
 	}
@@ -222,7 +224,7 @@ func (s Service) StartOperation(ctx context.Context, tenant, device string, peer
 	if json.Unmarshal(signedPayload(public, proof), &claims) != nil ||
 		claims.Purpose != "hive.device.challenge.bootstrap.v1" || claims.Tenant != tenant || claims.Device != device ||
 		!outletID.MatchString(claims.RequestID) || claims.IssuedAt.IsZero() ||
-		claims.Operation != target.Operation || claims.ContextID != target.ContextID || !sameRevision(claims.Revision, target.Revision) {
+		!sameOperation(claims.OperationTarget, target) {
 		return result, ErrProof
 	}
 
@@ -282,10 +284,19 @@ func (s Service) StartOperation(ctx context.Context, tenant, device string, peer
 		if outstanding >= 32 {
 			return ErrLimited
 		}
-		err = tx.QueryRow(ctx, `INSERT INTO hive.device_operation_challenges(tenant_id,device_id,nonce,device_revision,operation,context_id,context_revision)
+		if target.Operation == "profiles" || target.Operation == "context.login" {
+			err = tx.QueryRow(ctx, `INSERT INTO hive.device_operation_challenges
+                (tenant_id,device_id,nonce,device_revision,operation,context_revision,outlet_id,member_id,page_after)
+                SELECT $1,$2,$3,$4,$5,$6,$7,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid
+                WHERE $10::timestamptz>clock_timestamp() RETURNING id,expires_at`,
+				tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.Revision, target.Outlet, target.Member, target.After, bootstrapExpiresAt).
+				Scan(&result.ID, &result.ExpiresAt)
+		} else {
+			err = tx.QueryRow(ctx, `INSERT INTO hive.device_operation_challenges(tenant_id,device_id,nonce,device_revision,operation,context_id,context_revision)
 			SELECT $1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7
 			WHERE $8::timestamptz>clock_timestamp() RETURNING id,expires_at`,
-			tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.ContextID, target.Revision, bootstrapExpiresAt).Scan(&result.ID, &result.ExpiresAt)
+				tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.ContextID, target.Revision, bootstrapExpiresAt).Scan(&result.ID, &result.ExpiresAt)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrProof
 		}
