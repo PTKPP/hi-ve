@@ -45,7 +45,7 @@ func lockLocationMember(ctx context.Context, tx pgx.Tx, tenant, member string, e
 
 // AuthorizeLocationGrant checks the exact grant after locking its membership and supporting roles.
 func AuthorizeLocationGrant(ctx context.Context, tx pgx.Tx, tenant, member, location, action string) error {
-	if action != DeviceOperatorUse && action != CatalogPriceRead {
+	if action != DeviceOperatorUse && action != CatalogPriceRead && !IsInventoryLocationAction(action) {
 		return ErrForbidden
 	}
 	if err := lockLocationMember(ctx, tx, tenant, member, false); err != nil {
@@ -78,7 +78,7 @@ func (s RBAC) LocationActions(ctx context.Context, tenant, token, target, key st
 	actions = slices.Clone(actions)
 	slices.Sort(actions)
 	for i, action := range actions {
-		if (action != DeviceOperatorUse && !(s.CatalogPrices && action == CatalogPriceRead)) || (i > 0 && actions[i-1] == action) {
+		if (action != DeviceOperatorUse && !(s.CatalogPrices && action == CatalogPriceRead) && !(s.InventoryActions && IsInventoryLocationAction(action))) || (i > 0 && actions[i-1] == action) {
 			return LocationPolicy[string]{}, ErrRBACInput
 		}
 	}
@@ -150,7 +150,11 @@ func (s RBAC) LocationAssignments(ctx context.Context, tenant, token, target, ke
 					roles = append(roles, a.Role)
 				}
 				slices.Sort(locations)
-				ok, err := s.LockOutlets(ctx, tx, tenant, slices.Compact(locations))
+				lockLocations := s.LockOutlets
+				if s.InventoryActions && s.LockInventoryLocations != nil {
+					lockLocations = s.LockInventoryLocations
+				}
+				ok, err := lockLocations(ctx, tx, tenant, slices.Compact(locations))
 				if err != nil {
 					return nil, err
 				}
@@ -251,4 +255,30 @@ func LockOperatorMember(ctx context.Context, tx pgx.Tx, tenant, member string) e
 
 func AuthorizeDeviceOperator(ctx context.Context, tx pgx.Tx, tenant, member, outlet string) error {
 	return AuthorizeLocationGrant(ctx, tx, tenant, member, outlet, DeviceOperatorUse)
+}
+
+func IsInventoryLocationAction(action string) bool {
+	switch action {
+	case "inventory.balance.read",
+		"inventory.traceability.read",
+		"inventory.receiving.create",
+		"inventory.receiving.post",
+		"inventory.repacking.create",
+		"inventory.repacking.post",
+		"inventory.transfer.create",
+		"inventory.transfer.send",
+		"inventory.transfer.quick",
+		"inventory.transfer.receive",
+		"inventory.transfer.record_discrepancy",
+		"inventory.transfer.approve_discrepancy",
+		"inventory.adjustment.create",
+		"inventory.adjustment.read",
+		"inventory.adjustment.approve",
+		"inventory.stock_count.create",
+		"inventory.stock_count.observe",
+		"inventory.stock_count.approve":
+		return true
+	default:
+		return false
+	}
 }

@@ -31,11 +31,13 @@ var (
 )
 
 type RBAC struct {
-	CatalogProducts bool
-	CatalogPrices   bool
-	DB              *pgxpool.Pool
-	FingerprintKey  []byte
-	LockOutlets     func(context.Context, pgx.Tx, string, []string) (bool, error)
+	InventoryActions       bool
+	LockInventoryLocations func(context.Context, pgx.Tx, string, []string) (bool, error)
+	CatalogProducts        bool
+	CatalogPrices          bool
+	DB                     *pgxpool.Pool
+	FingerprintKey         []byte
+	LockOutlets            func(context.Context, pgx.Tx, string, []string) (bool, error)
 }
 
 type Role struct {

@@ -16,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"hi-ve/backend/internal/audit"
 	"hi-ve/backend/internal/catalog"
 	"hi-ve/backend/internal/devices"
@@ -44,6 +46,7 @@ type Google interface {
 }
 
 type API struct {
+	InventoryDB            *pgxpool.Pool
 	Catalog                catalog.Service
 	Provisioning           provisioning.Service
 	Identity               identity.Store
@@ -69,6 +72,7 @@ func (a API) Handler() http.Handler {
 	a.staffPINRoutes(mux)
 	a.locationRoutes(mux)
 	a.catalogRoutes(mux)
+	a.inventoryRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
 	a.operationalRoutes(mux)
