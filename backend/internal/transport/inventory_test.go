@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -299,6 +300,24 @@ func TestInventoryPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	must(run(func(tx pgx.Tx) error {
+		history, err := svc.AdjustmentHistory(ctx, tx, scope, destination, inventory.AdjustmentFilter{
+			SKU: bulk, Reason: "weighed again",
+		})
+		if err != nil {
+			return err
+		}
+		if len(history) != 2 || history[0].State != "rejected" || history[1].State != "posted" {
+			t.Fatalf("adjustment history %+v", history)
+		}
+		return nil
+	}))
+	if consistent := id(`SELECT bool_and(b.quantity=COALESCE((SELECT sum(m.delta) FROM hive.inventory_movements m
+        WHERE (m.tenant_id,m.location_id,m.sku_id,m.bucket)=(b.tenant_id,b.location_id,b.sku_id,b.bucket)
+        AND m.batch_id IS NOT DISTINCT FROM b.batch_id),0))::text FROM hive.inventory_balances b WHERE tenant_id=$1`, tenant); consistent != "true" {
+		t.Fatal("approval left mismatched ledger", consistent)
+	}
+
 	// Exercise the live Owner/API grant path without provisioning tenant data outside the fixture.
 	app := API{InventoryDB: db, Devices: devices.Service{InventoryCommands: true}, Entitlements: entitlements.Service{DB: db}, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
 	apiID := uuid()
@@ -323,4 +342,17 @@ func TestInventoryPostgres(t *testing.T) {
 		"revision": 1, "reason_code": "administrative_revocation",
 	}, admin), 200)
 	expectStatus(t, accessRequest(app, "POST", path+"/post", appOrigin, "", nil, owner), 403)
+	adjustmentGrant := "/api/v1/admin/tenants/" + tenant + "/entitlements/inventory.adjustment"
+	expectStatus(t, accessRequest(app, "PUT", adjustmentGrant, adminOrigin, "adjustment-history-grant", map[string]any{
+		"revision": 0, "effective_at": now.Add(-time.Hour), "expires_at": now.Add(time.Hour), "source_reference": "inventory-test",
+	}, admin), 200)
+	historyPath := "/api/v1/app/tenants/" + tenant + "/locations/" + destination + "/inventory/adjustments/" + bulk + "/history?reason=weighed+again"
+	expectStatus(t, accessRequest(app, "GET", historyPath, appOrigin, "", nil, otherOwner), 401)
+	historyResponse := accessRequest(app, "GET", historyPath, appOrigin, "", nil, owner)
+	expectStatus(t, historyResponse, 200)
+	var history []inventory.AdjustmentHistoryRow
+	if err := json.Unmarshal(historyResponse.Body.Bytes(), &history); err != nil || len(history) != 2 {
+		t.Fatal(err, history)
+	}
+
 }

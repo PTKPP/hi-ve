@@ -30,6 +30,7 @@ ALTER TABLE hive.tenant_role_location_actions ADD CONSTRAINT role_location_inven
     'inventory.transfer.record_discrepancy',
     'inventory.transfer.approve_discrepancy',
     'inventory.adjustment.create',
+    'inventory.adjustment.read',
     'inventory.adjustment.approve',
     'inventory.stock_count.create',
     'inventory.stock_count.observe',
@@ -62,3 +63,10 @@ CREATE TABLE hive.inventory_rejections (
 );
 CREATE TRIGGER inventory_rejections_immutable BEFORE UPDATE OR DELETE OR TRUNCATE
     ON hive.inventory_rejections FOR EACH STATEMENT EXECUTE FUNCTION hive.inventory_immutable();
+
+ALTER TABLE hive.inventory_postings ADD COLUMN device_id uuid,
+    ADD FOREIGN KEY (tenant_id,device_id) REFERENCES hive.devices;
+ALTER TABLE hive.inventory_rejections ADD COLUMN device_id uuid,
+    ADD FOREIGN KEY (tenant_id,device_id) REFERENCES hive.devices;
+CREATE INDEX inventory_adjustment_location_history
+    ON hive.inventory_documents(tenant_id,location_id,created_at DESC,id DESC) WHERE kind='adjustment';

@@ -100,7 +100,7 @@ func run(ctx context.Context) error {
 	if version >= 39 {
 		api.Catalog = catalog.Service{DB: db, CheckCapability: api.Entitlements.CheckWrite, AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets}
 	}
-	if version >= 44 {
+	if version >= 47 {
 		api.InventoryDB = db
 	}
 	address := os.Getenv("HIVE_LISTEN")

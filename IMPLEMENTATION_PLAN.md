@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00–02 selesai · Phase 03 selesai · Phase 04 IN PROGRESS.** PR #3 sudah merged di `96c930f0e712e1277c27c9e9df0af1168ecdd6e8`. Implementasi Catalog dan Locations berada di `feat/phase-03-catalog`. [Draft PR #10](https://github.com/PTKPP/hi-ve/pull/10) · [Kontrak dan API](backend/docs/CATALOG_LOCATIONS.md)
+**Phase 00–02 selesai · Phase 03 selesai · Phase 04 lulus Final Audit.** PR #3 sudah merged di `96c930f0e712e1277c27c9e9df0af1168ecdd6e8`. Implementasi Catalog dan Locations berada di `feat/phase-03-catalog`. [Draft PR #10](https://github.com/PTKPP/hi-ve/pull/10) · [Kontrak dan API](backend/docs/CATALOG_LOCATIONS.md)
 
 ## Audit dan exit Phase 00
 
@@ -27,7 +27,7 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | 01 · COMPLETED | Fondasi Go, registry canonical, migrasi PostgreSQL, integration environment disposable, dan batas paket. Entry 00 PASS, toolchain tersedia, ID lengkap dan stabil (CAP-01–05/18/23/47) | Build dan regresi registry lulus, batas dependensi teruji, migrasi lulus pada database baru dan upgrade dari baseline termasuk retry, concurrency dan rollback. Workflow aktual lulus pada commit foundation | PR #1 merged dan hasil merge terverifikasi |
 | 02 · COMPLETED | Platform, Identity, Locations Foundation, Devices, Settings dan Audit online sesuai 02.35 | Final Audit 02.36 PASS pada PostgreSQL disposable dan CI | PR #3 merged pada `96c930f` |
 | 03 · COMPLETED | Catalog, fitur Locations lanjutan dengan ID foundation yang sama, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | PR #10 merged pada `ac1356f` |
-| 04 · IN PROGRESS | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | Rancang kontrak Inventory dan fixture stok terakhir. Review OPEN-003 dan detail packaging/costing yang terdampak |
+| 04 · COMPLETED | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | Review merge PR #11 berdasarkan Final Audit 04.8 |
 | 05 · MENUNGGU 04 | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | Telusuri FR-POS/RET dan FR-HV-RCP-001, tes dua checkout berebut stok terakhir |
 | 06 · MENUNGGU 05 | Hi-Ve App PWA, penjualan tunai offline dan antrean audit login. Entry 05 PASS dan kebijakan offline terkait direview | UAT-05–07, retry/restart, shortage, revoke/suspend/expiry, storage loss, hapus antrean hanya setelah ACK persistensi. Operasi inventori sensitif hanya online | Selesaikan OPEN-001/007/008/013 untuk skenario terdampak lalu uji di browser/perangkat |
 | 07 · MENUNGGU 06 | Reports, Realtime dan integrasi tiga frontend. Entry 06 PASS, kontrak proyeksi dan payload berizin tersedia | Omzet UAT-10 benar, pending terpisah, event setelah commit, deduplikasi/reconnect, akses HPP diuji di API/report/export/cache/log/event. Build dan routing frontend static-only diverifikasi | Tetapkan dataset laporan dan observasi rollback/disconnect. Tahan hasil margin/valuasi sampai OPEN-002 selesai |
@@ -449,14 +449,14 @@ Scope exit mengikuti tabel fase dan Increment 03.1–03.4. Audit dimulai pada HE
 
 ## Phase 04 · Inventory
 
-Entry PASS. PR #10 merged ke main pada `ac1356f2c14a13d317bfcaecf166c838f248797e`. Branch `feat/phase-04-inventory` memakai commit merge tersebut. Migrasi target disposable 043–046. Compose development maksimum 028.
+Entry PASS. PR #10 merged ke main pada `ac1356f2c14a13d317bfcaecf166c838f248797e`. Branch `feat/phase-04-inventory` memakai commit merge tersebut. Migrasi target disposable 043–047. Compose development maksimum 028.
 
 | Increment | Cakupan dan status |
 |---|---|
 | 04.1 · FR-STK-01–03 | Ledger immutable, receipts dengan dokumen sumber, saldo atomik dan 4 bucket. Tes disposable mencakup replay, konflik payload, dua posting berebut stok terakhir, rollback checkout dan rekonsiliasi saldo terhadap ledger. |
 | 04.2–04.3 · FR-RCV-01, FR-REP-01–02, FR-PRD-04 | Receiving dan repacking draft/post via API Owner dengan entitlement Platform. Lokasi dan SKU aktif divalidasi, batch dan lineage persisten, kuantitas aktual presisi. Pengujian mencakup kesalahan draft, retry, akses lintas tenant, revoke serta rollback repacking saat stok kurang. Harga modal/valuasi dan packaging mengikuti OPEN-002/014. |
-| 04.4 · FR-TRF-01–03 | Kontrak Go membuktikan transfer cepat, transit, penerimaan parsial, over-receipt ditolak dan discrepancy tercatat. Penyelesaian discrepancy, approval transfer, dan integrasi akses operasional tetap PARTIAL. |
-| 04.5 · FR-RET-03, FR-COUNT-01/02 | Kontrak Go untuk draft adjustment, snapshot stok dan revisi, pencatatan fisik, serta deteksi perubahan setelah snapshot. Posting koreksi dan pengujian alur persetujuan diblokir oleh OPEN-003. |
+| 04.4 · FR-TRF-01–03 | Kontrak Go membuktikan transfer cepat, transit, penerimaan parsial, over-receipt ditolak dan discrepancy tercatat. Penyelesaian discrepancy dan integrasi akses operasional diselesaikan pada 04.7. |
+| 04.5 · FR-RET-03, FR-COUNT-01/02 | Kontrak Go untuk draft adjustment, snapshot stok dan revisi, pencatatan fisik, serta deteksi perubahan setelah snapshot. Posting koreksi dan alur persetujuan diselesaikan pada 04.7. |
 | 04.6 · Sales dan regresi | `PostSale` memakai transaksi caller dan hanya mendebit stok tersedia di outlet aktif. Tes membuktikan rollback checkout dan perebutan stok terakhir. Sales 05 memiliki checkout, snapshot, serta alur retur/void dan event bisnis. |
 
 PostgreSQL disposable lulus pada schema 046, termasuk upgrade 036→046 dan regresi Phase 02–03. Format, vet, race, build, guard arsitektur dan preflight Compose lulus lokal. Final Audit mengikuti bukti pada increment terakhir. [CI branch](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-04-inventory) [Kontrak Inventory](backend/docs/INVENTORY.md)
@@ -465,9 +465,24 @@ PostgreSQL disposable lulus pada schema 046, termasuk upgrade 036→046 dan regr
 
 **Keputusan OPEN-003 untuk Inventory.** Adjustment dan koreksi opname wajib disetujui sebelum posting. Snapshot yang berubah perlu pengukuran ulang. Penyelesaian discrepancy wajib approval dan alasan. Primary Owner aktif atau staf berizin eksplisit pada lokasi terkait dapat menyetujui. Self-approval staf ditolak. Owner dapat menyetujui sendiri dengan alasan dan audit. Transfer cepat memerlukan izin khusus di sumber dan tujuan tanpa approval kedua. Role tidak mendapat izin berdasarkan nama. [Issue #12](https://github.com/PTKPP/hi-ve/issues/12)
 
-Migrasi 047 menambah bukti approval/rejection immutable, mengarsipkan pengukuran opname yang disetujui, dan menyimpan jumlah discrepancy yang sudah diselesaikan. Grant RBAC lokasi dan challenge perangkat diperluas secara aditif. Approval dan mutasi stok memakai transaksi yang sama. Audit mencatat alasan, requester, aktor, waktu dan dokumen. Inventory tetap menjadi pemilik ledger/saldo. [Kontrak Inventory](backend/docs/INVENTORY.md)
+Migrasi 047 menambah bukti approval/rejection immutable, mengarsipkan pengukuran opname yang disetujui, dan menyimpan jumlah discrepancy yang sudah diselesaikan. Grant RBAC lokasi dan challenge perangkat diperluas secara aditif. Approval dan mutasi stok memakai transaksi yang sama. Audit mencatat requester, aktor, perangkat operator, waktu, dokumen dan alasan yang berlaku. Histori adjustment dapat difilter menurut lokasi, SKU, tanggal dan alasan. Inventory tetap menjadi pemilik ledger/saldo. [Kontrak Inventory](backend/docs/INVENTORY.md)
 
 OPEN-002 dan OPEN-014 tetap terbuka. Checkout, snapshot harga dan alur finansial tetap pada Phase 05. Penanganan antrean offline dan laporan lintas lokasi tetap mengikuti Phase 06–07. [Draft PR #11](https://github.com/PTKPP/hi-ve/pull/11)
+
+## Increment 04.8 · Final Audit Phase 04
+
+| Exit gate | Hasil | Bukti |
+|---|---|---|
+| Ledger, saldo, replay, konkurensi | PASS | `TestInventoryPostgres` membandingkan saldo dengan jumlah ledger setelah approval, menolak perubahan histori, menguji perebutan stok terakhir, replay dan rollback checkout. |
+| Receiving, batch dan repacking | PASS | Draft tidak mengubah saldo, posting/retry membuat mutasi tunggal, kegagalan repack membatalkan batch keluaran, lineage mempertahankan batch sumber. |
+| Transfer dan discrepancy | PASS | Partial receipt, penolakan over-receipt dan stok transit, transfer cepat dengan hak sumber/tujuan, resolusi beralasan dengan approval dan retry. |
+| Adjustment dan opname | PASS | Approval konkuren hanya menghasilkan satu posting. Rejection tidak memutasi stok. Snapshot usang ditolak, snapshot baru dan pengukuran yang disetujui tersimpan dalam audit. Histori terfilter menurut lokasi, SKU, tanggal dan alasan. |
+| Authorization, audit dan isolasi | PASS | Grant RBAC lokasi saat operasi, revoke sebelum replay, larangan self-approval staf, audit self-approval Owner, proof terikat request dan perangkat tercatat. Tes menolak tenant dan lokasi asing. |
+| Migrasi, regresi dan kontrak Sales | PASS | Migrasi 043–047, fresh/retry dan upgrade dari baseline dengan PostgreSQL disposable. Compose preflight schema 028. Inventory mendebit stok tersedia dalam transaksi Sales dan rollback saat checkout gagal. [Checks HEAD PR #11](https://github.com/PTKPP/hi-ve/pull/11/checks) |
+
+**PARTIAL lintas phase.** Costing, HPP dan bahan penunjang mengikuti OPEN-002/014. Checkout dan pembalikan finansial mengikuti Phase 05, sinkronisasi offline Phase 06, dan pelaporan lintas domain Phase 07. Risiko residual mencakup urutan lock saat Sales memakai kontrak posting dan durasi validasi constraint pada volume target.
+
+**GO untuk review merge Phase 04 setelah checks HEAD lulus.** PR #11 tetap Draft. [Draft PR #11](https://github.com/PTKPP/hi-ve/pull/11)
 
 ## Riwayat checkpoint
 

@@ -48,6 +48,7 @@ type Movement struct {
 	Delta    string    `json:"delta"`
 	Actor    string    `json:"actor_id"`
 	PostedAt time.Time `json:"posted_at"`
+	Device   *string   `json:"device_id"`
 }
 
 type TraceCursor struct {
@@ -78,7 +79,7 @@ func (s Service) BatchHistory(ctx context.Context, tx pgx.Tx, scope Scope, locat
 		}
 		cursorTime, kind, doc, line = &before.PostedAt, before.Kind, before.Document, before.Line
 	}
-	rows, err := tx.Query(ctx, `SELECT m.kind,m.document_id,m.line,m.sku_id,m.bucket,m.delta::text,p.actor_id,p.posted_at
+	rows, err := tx.Query(ctx, `SELECT m.kind,m.document_id,m.line,m.sku_id,m.bucket,m.delta::text,p.actor_id,p.posted_at,p.device_id
         FROM hive.inventory_movements m JOIN hive.inventory_postings p USING(tenant_id,kind,document_id)
         WHERE m.tenant_id=$1 AND m.location_id=$2 AND m.batch_id=$3
             AND ($4::timestamptz IS NULL OR (p.posted_at,m.kind,m.document_id,m.line) <
@@ -89,4 +90,52 @@ func (s Service) BatchHistory(ctx context.Context, tx pgx.Tx, scope Scope, locat
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Movement])
+}
+
+type AdjustmentFilter struct {
+	SKU, Reason, BeforeID string
+	From, To, Before      *time.Time
+}
+
+type AdjustmentHistoryRow struct {
+	ID             string    `json:"id"`
+	SKU            string    `json:"sku_id"`
+	Reason         string    `json:"reason"`
+	State          string    `json:"state"`
+	CreatedAt      time.Time `json:"created_at"`
+	Requester      string    `json:"requester_id"`
+	Approver       *string   `json:"approver_id"`
+	DecisionReason *string   `json:"decision_reason"`
+}
+
+const AdjustmentReadPermission = "inventory.adjustment.read"
+
+func (s Service) AdjustmentHistory(ctx context.Context, tx pgx.Tx, scope Scope, location string, f AdjustmentFilter) ([]AdjustmentHistoryRow, error) {
+	if f.SKU != "" && !uuidPattern.MatchString(f.SKU) || len(f.Reason) > 255 ||
+		(f.Before != nil && !uuidPattern.MatchString(f.BeforeID)) || (f.Before == nil && f.BeforeID != "") ||
+		(f.From != nil && f.To != nil && !f.From.Before(*f.To)) {
+		return nil, ErrInput
+	}
+	if err := s.authorized(ctx, tx, scope, AdjustmentReadPermission, location); err != nil {
+		return nil, err
+	}
+	if _, err := locations.PrimaryInventory(ctx, tx, scope.Tenant, location, false); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT d.id,d.payload->'item'->>'sku_id',d.payload->>'reason',
+        CASE WHEN a.document_id IS NOT NULL THEN 'posted' WHEN r.document_id IS NOT NULL THEN 'rejected' ELSE 'draft' END,
+        d.created_at,d.created_by,COALESCE(p.actor_id,r.actor_id),COALESCE(a.reason,r.reason)
+        FROM hive.inventory_documents d
+        LEFT JOIN hive.inventory_approvals a ON(a.tenant_id,a.kind,a.document_id)=(d.tenant_id,d.kind,d.id)
+        LEFT JOIN hive.inventory_postings p ON(p.tenant_id,p.kind,p.document_id)=(a.tenant_id,a.kind,a.document_id)
+        LEFT JOIN hive.inventory_rejections r ON(r.tenant_id,r.kind,r.document_id)=(d.tenant_id,d.kind,d.id)
+        WHERE d.tenant_id=$1 AND d.location_id=$2 AND d.kind='adjustment'
+        AND ($3='' OR d.payload->'item'->>'sku_id'=$3) AND ($4='' OR d.payload->>'reason'=$4)
+        AND ($5::timestamptz IS NULL OR d.created_at >= $5) AND ($6::timestamptz IS NULL OR d.created_at < $6)
+        AND ($7::timestamptz IS NULL OR (d.created_at,d.id) < ($7,NULLIF($8,'')::uuid))
+        ORDER BY d.created_at DESC,d.id DESC LIMIT 50`, scope.Tenant, location, f.SKU, f.Reason, f.From, f.To, f.Before, f.BeforeID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[AdjustmentHistoryRow])
 }

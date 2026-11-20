@@ -7,7 +7,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -148,11 +151,24 @@ func (a API) inventoryRoutes(mux *http.ServeMux) {
 		}
 		return nil, s.ResolveDiscrepancy(r.Context(), tx, scope, id, location, inventory.DiscrepancyResolution{Reason: in.Reason, Found: *in.Found})
 	})
+	register("GET", "adjustments/{id}/history", true, func(r *http.Request, tx pgx.Tx, s inventory.Service, scope inventory.Scope, id, location string) (any, error) {
+		filters, err := inventoryHistoryFilter(r.URL.RawQuery)
+		if err != nil {
+			return nil, err
+		}
+		filters.SKU = id
+		return s.AdjustmentHistory(r.Context(), tx, scope, location, filters)
+	})
+
 	register("GET", "balances/{id}", true, func(r *http.Request, tx pgx.Tx, s inventory.Service, scope inventory.Scope, id, location string) (any, error) {
 		return s.Stock(r.Context(), tx, scope, location, id)
 	})
 	register("GET", "batches/{id}/movements", true, func(r *http.Request, tx pgx.Tx, s inventory.Service, scope inventory.Scope, id, location string) (any, error) {
-		return s.BatchHistory(r.Context(), tx, scope, location, id, nil)
+		before, err := inventoryMovementCursor(r.URL.RawQuery)
+		if err != nil {
+			return nil, err
+		}
+		return s.BatchHistory(r.Context(), tx, scope, location, id, before)
 	})
 }
 
@@ -160,7 +176,7 @@ func (a API) inventoryEndpoint(operator bool, command inventoryCommand) http.Han
 	return func(w http.ResponseWriter, r *http.Request) {
 		tenant, location, id := r.PathValue("tenant_id"), r.PathValue("location_id"), r.PathValue("id")
 		device, operation := r.PathValue("device_id"), r.PathValue("operation_id")
-		if !uuid.MatchString(tenant) || !uuid.MatchString(location) || !uuid.MatchString(id) || r.URL.RawQuery != "" ||
+		if !uuid.MatchString(tenant) || !uuid.MatchString(location) || !uuid.MatchString(id) || (r.URL.RawQuery != "" && r.Method != "GET") ||
 			(operator && !uuid.MatchString(device)) || (operation != "" && !uuid.MatchString(operation)) {
 			fail(w, 400, "INVALID_REQUEST")
 			return
@@ -174,7 +190,7 @@ func (a API) inventoryEndpoint(operator bool, command inventoryCommand) http.Han
 		ctx := r.Context()
 		var result any
 		execute := func(tx pgx.Tx, actor string) error {
-			scope := inventory.Scope{Tenant: tenant, Actor: actor}
+			scope := inventory.Scope{Tenant: tenant, Actor: actor, Device: device}
 			service := inventory.Service{Authorize: func(ctx context.Context, tx pgx.Tx, called inventory.Scope, action, scopedLocation string) error {
 				if called != scope || !identity.IsInventoryLocationAction(action) {
 					return identity.ErrForbidden
@@ -249,4 +265,57 @@ func decodeJSON(r *http.Request, out any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(out) == nil && decoder.Decode(new(any)) == io.EOF
+}
+
+func inventoryHistoryFilter(raw string) (inventory.AdjustmentFilter, error) {
+	var filter inventory.AdjustmentFilter
+	query, err := url.ParseQuery(raw)
+	if err != nil {
+		return filter, inventory.ErrInput
+	}
+	filter.Reason, filter.BeforeID = query.Get("reason"), query.Get("before_id")
+	for key, values := range query {
+		if len(values) != 1 || values[0] == "" {
+			return filter, inventory.ErrInput
+		}
+		switch key {
+		case "reason", "before_id":
+		case "from", "to", "before":
+			timestamp, err := time.Parse(time.RFC3339Nano, values[0])
+			if err != nil {
+				return filter, inventory.ErrInput
+			}
+			switch key {
+			case "from":
+				filter.From = &timestamp
+			case "to":
+				filter.To = &timestamp
+			case "before":
+				filter.Before = &timestamp
+			}
+		default:
+			return filter, inventory.ErrInput
+		}
+	}
+	return filter, nil
+}
+
+func inventoryMovementCursor(raw string) (*inventory.TraceCursor, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	values, err := url.ParseQuery(raw)
+	if err != nil || len(values) != 4 || len(values["before"]) != 1 || len(values["kind"]) != 1 ||
+		len(values["document_id"]) != 1 || len(values["line"]) != 1 || values.Get("kind") == "" {
+		return nil, inventory.ErrInput
+	}
+	postedAt, err := time.Parse(time.RFC3339Nano, values.Get("before"))
+	if err != nil {
+		return nil, inventory.ErrInput
+	}
+	line, err := strconv.ParseInt(values.Get("line"), 10, 32)
+	if err != nil {
+		return nil, inventory.ErrInput
+	}
+	return &inventory.TraceCursor{PostedAt: postedAt, Kind: values.Get("kind"), Document: values.Get("document_id"), Line: int32(line)}, nil
 }

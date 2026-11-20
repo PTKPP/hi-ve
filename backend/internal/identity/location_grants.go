@@ -272,6 +272,7 @@ func IsInventoryLocationAction(action string) bool {
 		"inventory.transfer.record_discrepancy",
 		"inventory.transfer.approve_discrepancy",
 		"inventory.adjustment.create",
+		"inventory.adjustment.read",
 		"inventory.adjustment.approve",
 		"inventory.stock_count.create",
 		"inventory.stock_count.observe",

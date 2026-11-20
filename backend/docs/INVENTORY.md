@@ -4,7 +4,7 @@ Inventory memiliki ledger dan saldo per tenant, node persediaan, SKU, batch opsi
 
 ## Receiving dan repacking online
 
-Pada schema 044 ke atas, Primary Owner memakai sesi tenant aktif dan grant Platform `inventory.receiving` atau `inventory.repacking` sesuai operasi. Capability ini menggunakan mekanisme grant, expiry dan revoke yang sudah ada.
+Pada schema 047 ke atas, Primary Owner memakai sesi tenant aktif dan grant Platform `inventory.receiving` atau `inventory.repacking` sesuai operasi. Capability ini menggunakan mekanisme grant, expiry dan revoke yang sudah ada.
 
 - `PUT /api/v1/app/tenants/{tenant_id}/locations/{location_id}/inventory/receiving/{id}` menyimpan draft. Isi `item` berisi `sku_id`, `batch_id` untuk SKU tracked, `quantity` sebagai string dan `unit`. Isi lainnya `lot`, `origin`, `received_on` dengan format YYYY-MM-DD, dan `non_saleable`.
 - `PUT /api/v1/app/tenants/{tenant_id}/locations/{location_id}/inventory/repacking/{id}` menyimpan `source` dan `output` dengan bentuk pengukuran yang sama, `lot` keluaran dan `variance_note` opsional. Keluaran menggunakan SKU yang dikonfigurasi untuk tracking batch. Input dan output diukur terpisah, termasuk jika dimensinya berbeda.
@@ -28,7 +28,8 @@ Gunakan prefix `/api/v1/app/tenants/{tenant_id}/locations/{location_id}/inventor
 | PUT `/counts/{id}` dan `/counts/{id}/observations/{operation_id}` | Snapshot menerima `items` dengan `sku_id` dan `batch_id`. Pengukuran menerima bentuk item lengkap dan mengembalikan saldo snapshot, fisik, selisih, serta flag perubahan. |
 | POST `/counts/{id}/approve` atau `/reject` | Setujui dengan satu ID pengukuran per baris snapshot pada `observation_ids` dan `reason`. Approval menolak snapshot usang dengan `STALE_SNAPSHOT`. |
 | POST `/discrepancies/{id}/resolve` | ID berasal dari receipt discrepancy. Kirim `reason` dan `found` eksplisit. Barang ditemukan dipindahkan ke stok tersedia. Barang yang dinyatakan hilang dikeluarkan dari bucket discrepancy. |
-| GET `/balances/{id}` atau `/batches/{id}/movements` | Gunakan ID SKU atau batch. Hasil terbatas pada lokasi yang diotorisasi. |
+| GET `/balances/{id}` atau `/batches/{id}/movements` | Gunakan ID SKU atau batch. Hasil terbatas pada lokasi yang diotorisasi. Untuk halaman histori batch berikutnya kirim `before`, `kind`, `document_id`, dan `line` dari baris terakhir. |
+| GET `/adjustments/{sku_id}/history` | Filter alasan eksak dengan `reason`. Filter tanggal dengan `from` inklusif dan `to` eksklusif dalam RFC3339. Gunakan `before` dan `before_id` dari baris terakhir untuk halaman berikutnya. |
 
 
 Sales memanggil `PostSale` dalam transaksi checkout setelah membentuk konteks tenant, aktor dan outlet dari sesi yang terotorisasi. Gunakan ID sale yang sama untuk retry. Inventory hanya mendebit `available`, memvalidasi outlet aktif, SKU aktif, batch dan pengukuran, serta mengaudit mutasi melalui ledger. Sales harus membatalkan transaksi checkout bila Inventory menghasilkan error. Checkout HTTP, snapshot harga/diskon, retur, void, dan penerbitan peristiwa setelah commit berada di jalur integrasi Sales.

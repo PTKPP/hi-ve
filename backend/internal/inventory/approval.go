@@ -290,9 +290,9 @@ func (s Service) RejectCorrection(ctx context.Context, tx pgx.Tx, scope Scope, i
 		if _, err = locations.PrimaryInventory(ctx, tx, scope.Tenant, location, false); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO hive.inventory_rejections(tenant_id,kind,document_id,actor_id,requester_id,location_id,reason)
-            SELECT $1,$2,$3,$4,$5,$6,$7 WHERE NOT EXISTS(SELECT 1 FROM hive.inventory_postings WHERE tenant_id=$1 AND kind=$2 AND document_id=$3)
-            ON CONFLICT DO NOTHING`, scope.Tenant, kind, id, scope.Actor, requester, location, reason)
+		tag, err := tx.Exec(ctx, `INSERT INTO hive.inventory_rejections(tenant_id,kind,document_id,actor_id,requester_id,location_id,reason,device_id)
+            SELECT $1,$2,$3,$4,$5,$6,$7,NULLIF($8,'')::uuid WHERE NOT EXISTS(SELECT 1 FROM hive.inventory_postings WHERE tenant_id=$1 AND kind=$2 AND document_id=$3)
+            ON CONFLICT DO NOTHING`, scope.Tenant, kind, id, scope.Actor, requester, location, reason, scope.Device)
 		if err != nil || tag.RowsAffected() != 0 {
 			return err
 		}

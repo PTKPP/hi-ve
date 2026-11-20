@@ -26,6 +26,7 @@ var (
 type Scope struct {
 	Tenant string
 	Actor  string
+	Device string
 }
 
 // Authorize checks the applicable explicit user permission and entitlement inside
@@ -70,8 +71,8 @@ func claim(ctx context.Context, tx pgx.Tx, scope Scope, kind, id string, input a
 		return false, err
 	}
 	hash := sha256.Sum256(data)
-	tag, err := tx.Exec(ctx, `INSERT INTO hive.inventory_postings(tenant_id,kind,document_id,actor_id,fingerprint)
-        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, scope.Tenant, kind, id, scope.Actor, hash[:])
+	tag, err := tx.Exec(ctx, `INSERT INTO hive.inventory_postings(tenant_id,kind,document_id,actor_id,fingerprint,device_id)
+        VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid) ON CONFLICT DO NOTHING`, scope.Tenant, kind, id, scope.Actor, hash[:], scope.Device)
 	if err != nil || tag.RowsAffected() != 0 {
 		return false, err
 	}

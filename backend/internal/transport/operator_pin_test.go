@@ -348,6 +348,10 @@ func TestOperatorPINPostgres(t *testing.T) {
 	expectStatus(t, inventoryCall("PUT", inventoryPath+ownAdjustmentID, adjustment), 204)
 	expectStatus(t, inventoryCall("POST", inventoryPath+ownAdjustmentID+"/approve", reason), 403)
 	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 204)
+	if auditDevice := id(`SELECT device_id FROM hive.inventory_postings WHERE tenant_id=$1 AND kind='adjustment' AND document_id=$2`, tenant, adjustmentID); auditDevice != device {
+		t.Fatal("approval device was not recorded")
+	}
+
 	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 204)
 	if _, err = rbac.LocationActions(ctx, tenant, owner.Value, approvalRole, "inventory-approval-revoke", &assigned.Revision,
 		[]string{inventory.AdjustmentDraftPermission}); err != nil {
