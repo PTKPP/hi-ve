@@ -16,7 +16,7 @@ Perubahan master memakai entitlement online `catalog.products`. Staf memerlukan 
 
 Kasir membaca `GET /api/v1/operator/tenants/{tenant_id}/devices/{device_id}/catalog/skus/{id}/price` dengan cookie operator dan proof `context.read` sekali pakai. Outlet berasal dari konteks Devices. Identity memeriksa grant lokasi `catalog.pricing.read`. Hasil hanya memuat `price_id`, `amount`, `revision`, dan `updated_at`. Catalog memilih override outlet, lalu harga dasar jika override tidak tersedia.
 
-**Aktivasi pricing masih menunggu keputusan entitlement.** Wiring aplikasi memakai pemeriksaan Platform untuk `catalog.pricing`. Allowlist operasional Issue #5 masih hanya memuat `catalog.products`. Tes disposable menggunakan pengganti pemeriksaan capability pricing untuk memverifikasi perilaku harga dan otorisasi pengguna secara independen. HPP, approval perubahan sensitif dan rincian costing kemasan mengikuti OPEN-002/003/014.
+Platform memberikan `catalog.pricing` melalui endpoint entitlement yang sama dengan `catalog.products`. Kedua capability mempunyai grant, revocation, dan expiry tersendiri. Owner aktif mengubah harga dan membaca histori. Grant `catalog.products.manage` mengizinkan pengelolaan master dan SKU. Kasir memerlukan grant lokasi `catalog.pricing.read` serta konteks outlet aktif. Pemisahan capability tidak mengubah kebijakan monetisasi. HPP, approval perubahan sensitif dan costing kemasan mengikuti OPEN-002/003/014.
 
 ## Lokasi dan kontrak consumer
 

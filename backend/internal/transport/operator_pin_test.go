@@ -2,7 +2,6 @@ package transport
 
 import (
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,8 +13,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"hi-ve/backend/internal/audit"
 	"hi-ve/backend/internal/catalog"
@@ -74,12 +71,9 @@ func TestOperatorPINPostgres(t *testing.T) {
 	}
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
-	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, CheckCapability: func(ctx context.Context, tx pgx.Tx, tenant, capability string) error {
-		if capability == "catalog.pricing" {
-			return nil
-		}
-		return (entitlements.Service{DB: db}).CheckWrite(ctx, tx, tenant, capability)
-	}}
+	app.AdminOrigin = adminOrigin
+	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
+	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
@@ -264,6 +258,11 @@ func TestOperatorPINPostgres(t *testing.T) {
 		proof := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: previous.ID, Revision: &rev})
 		return send(handler, "GET", path, proof, nil, cookies[0])
 	}
+	pricingAdmin := entitlementAdminFixture(t, db, "operator-pricing-admin")
+	grantPath := "/api/v1/admin/tenants/" + tenant + "/entitlements/catalog.pricing"
+	pricingNow := time.Now().UTC()
+	expectStatus(t, accessRequest(handler, "PUT", grantPath, adminOrigin, "operator-pricing-grant",
+		pricingGrant(0, pricingNow.Add(-time.Hour), pricingNow.Add(time.Hour)), pricingAdmin), 200)
 	expectStatus(t, readPrice(pricePath), 403)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'catalog.pricing.read')`, tenant, role)
 	expectStatus(t, readPrice(pricePath+"?outlet_id="+otherOutlet), 400)
@@ -273,6 +272,11 @@ func TestOperatorPINPostgres(t *testing.T) {
 	if err := json.Unmarshal(priced.Body.Bytes(), &fields); err != nil || len(fields) != 4 || fields["amount"] != "100" || fields["price_id"] == nil || fields["revision"] != float64(1) || fields["updated_at"] == nil {
 		t.Fatal("unexpected operator price projection")
 	}
+	expectStatus(t, accessRequest(handler, "POST", grantPath+"/revoke", adminOrigin, "operator-pricing-revoke",
+		map[string]any{"revision": 1, "reason_code": "administrative_revocation"}, pricingAdmin), 200)
+	expectStatus(t, readPrice(pricePath), 403)
+	expectStatus(t, accessRequest(handler, "PUT", grantPath, adminOrigin, "operator-pricing-regrant",
+		pricingGrant(2, pricingNow.Add(-time.Hour), pricingNow.Add(time.Hour)), pricingAdmin), 200)
 	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='catalog.pricing.read'`, tenant, role)
 	expectStatus(t, readPrice(pricePath), 403)
 
@@ -289,6 +293,9 @@ func TestOperatorPINPostgres(t *testing.T) {
 	exec(`INSERT INTO hive.tenant_role_assignments VALUES($1,$2,$3)`, tenant, member, role)
 	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
 	exec(`INSERT INTO hive.tenant_entitlements VALUES($1,'catalog.products',now(),now()+interval '1 day','fixture',NULL,1)`, tenant)
+	appPricePath := "/api/v1/app/tenants/" + tenant + "/catalog/skus/" + sku + "/price"
+	expectStatus(t, accessRequest(handler, "PUT", appPricePath, appOrigin, "operator-price-write",
+		map[string]any{"revision": 0, "amount": "99"}, cookies[0]), 401)
 	signed := command()
 	expectStatus(t, send(handler, "PUT", staffPath, signed, map[string]any{"revision": 0, "name": "Lain", "category": "Pangan"}, cookies[0]), 401)
 	expectStatus(t, send(handler, "PUT", staffPath, signed, body, cookies[0]), 200)

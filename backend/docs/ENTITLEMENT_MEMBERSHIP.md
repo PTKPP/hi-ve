@@ -2,7 +2,7 @@
 
 ## Entitlement
 
-The initial admin allowlist contains only `catalog.products`. Its first consumer in this increment is the disposable acceptance test. Catalog product writes are the proposed first business consumer and need their own contract approval. [Entitlement decision](https://github.com/PTKPP/hi-ve/issues/5#issuecomment-7012754500)
+The Phase 03 admin allowlist supports `catalog.products` and `catalog.pricing` as independent canonical capabilities. Catalog consumes these grants alongside live Identity permissions. See [Catalog and Locations](CATALOG_LOCATIONS.md).
 
 Under `/api/v1/admin/tenants/{tenant_id}/entitlements/{capability_id}`, use GET for the current grant, PUT with `{effective_at,expires_at,source_reference,revision}` to grant, and POST to `/revoke` with `{reason_code,revision}` to revoke. Grant times normalize to UTC and apply on `[effective_at,expires_at)`. The initial finite lease applies to active tenants. Grant source is `manual_platform`, and the caller supplies an opaque reference. The revoke reason is `administrative_revocation`. The three operations each have a dedicated `platform.entitlements.*` permission.
 

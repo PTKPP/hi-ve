@@ -1,12 +1,13 @@
 package transport
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,17 +24,11 @@ func TestCatalogPostgres(t *testing.T) {
 	db := disposableDatabase(t)
 	tenant, _, owner := ownerSessionFixture(t, db, "catalog-owner")
 	foreign, _, other := ownerSessionFixture(t, db, "catalog-foreign")
-	ent := entitlements.Service{DB: db}
-	cat := catalog.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets,
-		CheckCapability: func(ctx context.Context, tx pgx.Tx, tenant, capability string) error {
-			// Exercise pricing independently of the commercial grant allowlist.
-			if capability == "catalog.pricing" {
-				return nil
-			}
-			return ent.CheckWrite(ctx, tx, tenant, capability)
-		}}
+	ent := entitlements.Service{DB: db, FingerprintKey: bytes.Repeat([]byte{4}, 32)}
+	platformAdmin := entitlementAdminFixture(t, db, "catalog-admin")
+	cat := catalog.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets, CheckCapability: ent.CheckWrite}
 	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: (devices.Service{DB: db}).EndOutletContexts}
-	handler := API{Catalog: cat, Locations: loc, AppOrigin: appOrigin}.Handler()
+	handler := API{Catalog: cat, Locations: loc, Entitlements: ent, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
 	const product = "d96ca4f5-e677-4a7a-90ea-fbd040000001"
 	const sku = "d96ca4f5-e677-4a7a-90ea-fbd040000002"
 	const variant = "d96ca4f5-e677-4a7a-90ea-fbd040000003"
@@ -90,10 +85,17 @@ func TestCatalogPostgres(t *testing.T) {
 	foreignOutlet := makeLocation(foreign, "north", "outlet")
 	amount := func(rev int, n string) map[string]any { return map[string]any{"amount": n, "revision": rev} }
 	prices := skus + sku
-	liveCatalog := cat
-	liveCatalog.CheckCapability = ent.CheckWrite
-	liveApp := API{Catalog: liveCatalog, AppOrigin: appOrigin}.Handler()
-	expectStatus(t, accessRequest(liveApp, "PUT", prices+"/price", appOrigin, "price-without-entitlement", amount(0, "100"), owner), 403)
+	expectStatus(t, put(prices+"/price", "price-without-entitlement", amount(0, "100"), owner), 403)
+	grantPath := "/api/v1/admin/tenants/" + tenant + "/entitlements/catalog.pricing"
+	now := time.Now().UTC()
+	grant := func(revision int, key string, effective, expiry time.Time) {
+		t.Helper()
+		expectStatus(t, accessRequest(handler, "PUT", grantPath, adminOrigin, key, pricingGrant(revision, effective, expiry), platformAdmin), 200)
+	}
+	grant(0, "pricing-active-grant", now.Add(-time.Hour), now.Add(time.Hour))
+	expectStatus(t, accessRequest(handler, "GET", grantPath, adminOrigin, "", nil, platformAdmin), 200)
+	expectStatus(t, put(foreignPath+"skus/"+sku+"/price", "foreign-denial", amount(0, "1"), other), 403)
+	expectStatus(t, put(prices+"/price", "foreign-owner", amount(0, "1"), other), 401)
 	expectStatus(t, put(prices+"/price", "decimal", amount(0, "1e3"), owner), 400)
 	expectStatus(t, put(prices+"/price", "base", amount(0, "9900.0001"), owner), 200)
 	for _, bad := range []string{warehouse, foreignOutlet} {
@@ -184,7 +186,24 @@ func TestCatalogPostgres(t *testing.T) {
 		t.Fatal("inactive SKU saleable", err)
 	}
 	expectStatus(t, accessRequest(handler, "GET", skus+sku, appOrigin, "", nil, owner), 200)
-	if _, err = db.Exec(ctx, `UPDATE hive.tenant_entitlements SET revoked_at=now() WHERE tenant_id=$1`, tenant); err != nil {
+	expectStatus(t, accessRequest(handler, "POST", grantPath+"/revoke", adminOrigin, "pricing-revoke-key", map[string]any{
+		"revision": 1, "reason_code": "administrative_revocation",
+	}, platformAdmin), 200)
+	expectStatus(t, put(prices+"/price", "base", amount(0, "9900.0001"), owner), 403)
+	expectStatus(t, accessRequest(handler, "GET", override+"/history", appOrigin, "", nil, owner), 403)
+	expectStatus(t, accessRequest(handler, "GET", skus+sku, appOrigin, "", nil, owner), 200)
+	grant(2, "pricing-expiry-grant", now.Add(-time.Hour), now.Add(time.Hour))
+	expectStatus(t, accessRequest(handler, "GET", override+"/history", appOrigin, "", nil, owner), 200)
+	// Put the effective window at the exact boundary without waiting on wall time.
+	if _, err = db.Exec(ctx, `UPDATE hive.tenant_entitlements SET expires_at=clock_timestamp()
+        WHERE tenant_id=$1 AND capability_id='catalog.pricing'`, tenant); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, put(prices+"/price", "expired-price-update", amount(1, "100"), owner), 403)
+	expectStatus(t, accessRequest(handler, "GET", override+"/history", appOrigin, "", nil, owner), 403)
+	expectStatus(t, accessRequest(handler, "GET", skus+sku, appOrigin, "", nil, owner), 200)
+	if _, err = db.Exec(ctx, `UPDATE hive.tenant_entitlements SET revoked_at=clock_timestamp()
+        WHERE tenant_id=$1 AND capability_id='catalog.products'`, tenant); err != nil {
 		t.Fatal(err)
 	}
 	expectStatus(t, put(products, "create", parent, owner), 403)
