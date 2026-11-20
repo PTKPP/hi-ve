@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"net/netip"
@@ -15,6 +16,7 @@ func (a API) operationalRoutes(mux *http.ServeMux) {
 	const base = "/api/v1/operator/tenants/{tenant_id}/devices/{device_id}"
 	if a.Devices.PIN != nil {
 		mux.HandleFunc("GET "+base+"/profiles", a.origin(a.AppOrigin, a.operatorProfiles))
+		mux.HandleFunc("POST "+base+"/context", a.origin(a.AppOrigin, a.operatorPINLogin))
 	}
 	mux.HandleFunc("OPTIONS /api/v1/operator/{rest...}", a.origin(a.AppOrigin, preflight))
 	mux.HandleFunc("POST "+base+"/challenges", a.origin(a.AppOrigin, a.operationChallenge))
@@ -108,4 +110,41 @@ func (a API) operatorProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, page)
+}
+
+func (a API) operatorPINLogin(w http.ResponseWriter, r *http.Request) {
+	tenant, device := r.PathValue("tenant_id"), r.PathValue("device_id")
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !uuid.MatchString(tenant) || !uuid.MatchString(device) || r.URL.RawQuery != "" {
+		deviceError(w, devices.ErrInput)
+		return
+	}
+	var in struct {
+		Outlet   string `json:"outlet_id"`
+		Member   string `json:"member_id"`
+		PIN      string `json:"pin"`
+		Revision *int64 `json:"expected_revision"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	result, token, err := a.Devices.LoginPIN(r.Context(), tenant, device, r.Header.Get("Device-Proof"), in.PIN, peer,
+		devices.OperationTarget{Operation: "context.login", Outlet: in.Outlet, Member: in.Member, Revision: in.Revision})
+	if err != nil {
+		switch {
+		case errors.Is(err, devices.ErrProof):
+			fail(w, 401, "AUTHENTICATION_FAILED")
+		case errors.Is(err, devices.ErrLimited):
+			w.Header().Set("Retry-After", "60")
+			deviceError(w, err)
+		case errors.Is(err, devices.ErrInput), errors.Is(err, devices.ErrConflict):
+			deviceError(w, err)
+		default:
+			fail(w, 503, "OPERATOR_LOGIN_UNAVAILABLE")
+		}
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: operatorCookie, Value: token, Path: "/", MaxAge: 8 * 60 * 60, Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	respond(w, 201, result)
 }

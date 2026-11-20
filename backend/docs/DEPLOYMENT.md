@@ -61,6 +61,15 @@ docker --context default compose -f backend/deploy/dev/compose.yaml exec -T db \
 
 Jauhkan dump dan env lokal dari Git. Migrasi automated memakai `backend/scripts/test-migrations.sh`, dengan database `hive_test` disposable dan marker tes. Verifikasi koneksi runtime dengan startup lokal dan koneksi SQL melalui loopback. Buktikan alur OIDC/SMTP menggunakan konfigurasi development khusus ketika tersedia.
 
+## DV3 PIN-only online
+
+Backend membuka rute DV3 hanya saat schema minimal 035 dan pepper online dikonfigurasi. Pengujian schema 029 ke atas dilakukan pada PostgreSQL disposable. Compose development tetap berhenti di 028. Simpan konfigurasi fitur pada penyimpanan secret yang terpisah dari PostgreSQL.
+
+- `HIVE_PIN_PEPPER_VERSION` adalah integer positif. `HIVE_PIN_PEPPER` berisi 32 byte acak dalam format hex.
+- `HIVE_PIN_PREVIOUS_PEPPER_VERSION` dan `HIVE_PIN_PREVIOUS_PEPPER` opsional sebagai pasangan untuk rotasi terencana. Set/reset memakai versi aktif. Pertahankan versi sebelumnya hanya selama credential aktif masih mereferensikannya dan key masih aman. Untuk key yang bocor atau hilang, koordinasikan penghapusan versi di semua replica dan reset Owner. Pembacaan konteks menolak credential versi yang sudah tidak tersedia.
+- Konfigurasi seluruh variabel PIN kosong menutup rute DV3. Lifecycle dan cleanup histori tetap berjalan pada schema kompatibel. Untuk rollback binary, tutup akses DV3 dan akhiri konteks operator yang pernah diterbitkan sebelum memakai binary sebelumnya. Pertahankan schema aditif, UUID netral dan histori. Gunakan baseline rollback yang kompatibel dengan M5.
+- Eksekusi pada target persisten mengikuti persetujuan terpisah. Verifikasi role database, key distribution, sumber direct peer, kapasitas Argon2id, Origin/cookie, dan browser target pada gate OPEN-015.
+
 ## Desain production di Proxmox
 
 | Komponen | Desain |

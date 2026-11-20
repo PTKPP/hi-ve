@@ -221,7 +221,14 @@ func (s Service) StartOperation(ctx context.Context, tenant, device string, peer
 		return result, err
 	}
 	var claims bootstrapClaims
-	if json.Unmarshal(signedPayload(public, proof), &claims) != nil ||
+	payload := signedPayload(public, proof)
+	decoded := false
+	if target.Operation == "profiles" || target.Operation == "context.login" {
+		decoded = decodePINProof(payload, &claims)
+	} else {
+		decoded = json.Unmarshal(payload, &claims) == nil
+	}
+	if !decoded ||
 		claims.Purpose != "hive.device.challenge.bootstrap.v1" || claims.Tenant != tenant || claims.Device != device ||
 		!outletID.MatchString(claims.RequestID) || claims.IssuedAt.IsZero() ||
 		!sameOperation(claims.OperationTarget, target) {
@@ -356,6 +363,26 @@ func (s Service) UseOperation(ctx context.Context, tenant, device, operation, pr
 			}
 			if err = s.AuthorizeOperator(ctx, tx, tenant, current.Member, current.Outlet); err != nil {
 				return err
+			}
+			if s.PINContextSchema {
+				var revision *int64
+				err = tx.QueryRow(ctx, `SELECT credential_revision FROM hive.operational_contexts
+                    WHERE tenant_id=$1 AND device_id=$2 AND id=$3`, tenant, device, claims.ContextID).Scan(&revision)
+				if err != nil {
+					return err
+				}
+				if revision != nil {
+					if s.PIN == nil {
+						return ErrProof
+					}
+					valid, err := s.PIN.ContextCredentialActive(ctx, tx, tenant, current.Member, *revision)
+					if err != nil {
+						return err
+					}
+					if !valid {
+						return ErrProof
+					}
+				}
 			}
 		}
 		var revision int64

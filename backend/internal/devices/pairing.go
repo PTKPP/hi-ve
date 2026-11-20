@@ -35,6 +35,7 @@ var (
 type Service struct {
 	DB                 *pgxpool.Pool
 	PIN                *identity.PIN
+	PINContextSchema   bool
 	CodeKey            []byte
 	PreviousCodeKey    []byte
 	RateKey            []byte

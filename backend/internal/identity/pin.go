@@ -40,6 +40,7 @@ type PIN struct {
 
 func NewPIN(db *pgxpool.Pool, fingerprint []byte, current int, currentKey []byte, previous int, previousKey []byte, end func(context.Context, pgx.Tx, string, string) error) (*PIN, error) {
 	if db == nil || end == nil || current < 1 || len(currentKey) != 32 || len(fingerprint) < 32 ||
+		hmac.Equal(fingerprint, currentKey) || (previous > 0 && (hmac.Equal(fingerprint, previousKey) || hmac.Equal(currentKey, previousKey))) ||
 		previous < 0 || previous >= current || (previous == 0 && len(previousKey) != 0) || (previous > 0 && len(previousKey) != 32) {
 		return nil, ErrPINKey
 	}
@@ -124,8 +125,10 @@ func (s *PIN) CreateProfile(ctx context.Context, tenant, token, key, name string
 
 func pinStatus(ctx context.Context, tx pgx.Tx, tenant, member string) (PINStatus, error) {
 	result := PINStatus{Member: member}
-	err := tx.QueryRow(ctx, `SELECT COALESCE(c.revision,0), c.verifier IS NOT NULL
-        FROM hive.tenant_staff_profiles p LEFT JOIN hive.member_pin_credentials c USING(tenant_id,member_id)
+	err := tx.QueryRow(ctx, `SELECT COALESCE(c.revision,0), COALESCE(c.verifier IS NOT NULL AND c.membership_revision=m.lifecycle_revision AND m.active,false)
+        FROM hive.tenant_staff_profiles p
+        JOIN hive.tenant_memberships m ON m.tenant_id=p.tenant_id AND m.principal_id=p.member_id
+        LEFT JOIN hive.member_pin_credentials c ON c.tenant_id=p.tenant_id AND c.member_id=p.member_id
         WHERE p.tenant_id=$1 AND p.member_id=$2`, tenant, member).Scan(&result.Revision, &result.Configured)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrRBACTarget
@@ -179,8 +182,9 @@ func (s *PIN) Set(ctx context.Context, tenant, member, token, pin string, revisi
 			return err
 		}
 		var active bool
-		err = tx.QueryRow(ctx, `SELECT active FROM hive.tenant_memberships
-          WHERE tenant_id=$1 AND principal_id=$2 AND role<>'primary_owner' FOR NO KEY UPDATE`, tenant, member).Scan(&active)
+		var lifecycle int64
+		err = tx.QueryRow(ctx, `SELECT active,lifecycle_revision FROM hive.tenant_memberships
+          WHERE tenant_id=$1 AND principal_id=$2 AND role<>'primary_owner' FOR NO KEY UPDATE`, tenant, member).Scan(&active, &lifecycle)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrRBACTarget
 		}
@@ -198,10 +202,10 @@ func (s *PIN) Set(ctx context.Context, tenant, member, token, pin string, revisi
 			return ErrRBACRevision
 		}
 		result = PINStatus{Member: member, Configured: true, Revision: previous.Revision + 1}
-		_, err = tx.Exec(ctx, `INSERT INTO hive.member_pin_credentials VALUES($1,$2,$3,$4,$5,$6)
+		_, err = tx.Exec(ctx, `INSERT INTO hive.member_pin_credentials(tenant_id,member_id,revision,pepper_version,salt,verifier,membership_revision) VALUES($1,$2,$3,$4,$5,$6,$7)
           ON CONFLICT(tenant_id,member_id) DO UPDATE SET revision=EXCLUDED.revision,
-          pepper_version=EXCLUDED.pepper_version,salt=EXCLUDED.salt,verifier=EXCLUDED.verifier`,
-			tenant, member, result.Revision, s.current, salt, verifier)
+          pepper_version=EXCLUDED.pepper_version,salt=EXCLUDED.salt,verifier=EXCLUDED.verifier,membership_revision=EXCLUDED.membership_revision`,
+			tenant, member, result.Revision, s.current, salt, verifier, lifecycle)
 		if err != nil {
 			return err
 		}

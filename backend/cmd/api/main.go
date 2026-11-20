@@ -83,7 +83,8 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if version >= 32 {
+	deviceService.PINContextSchema = version >= 35
+	if deviceService.PINContextSchema {
 		deviceService.PIN = staffPIN
 	}
 	api := transport.API{StaffPIN: staffPIN, Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
@@ -119,6 +120,14 @@ func run(ctx context.Context) error {
 					slog.Warn("online login history cleanup failed")
 				} else if backlog {
 					slog.Warn("online login history cleanup reached batch limit")
+				}
+				if deviceService.PINContextSchema {
+					backlog, err := api.LoginHistory.CleanupOperators(cleanupCtx)
+					if err != nil && cleanupCtx.Err() == nil {
+						slog.Warn("operator login history cleanup failed")
+					} else if backlog {
+						slog.Warn("operator login history cleanup reached batch limit")
+					}
 				}
 				if err := api.Devices.Cleanup(cleanupCtx); err != nil && cleanupCtx.Err() == nil {
 					slog.Warn("expired device pairing state cleanup failed")
@@ -207,29 +216,22 @@ func configuredPIN(db *pgxpool.Pool, fingerprint []byte, schema int, devices dev
 	if currentKey == "" && currentVersion == "" && previousKey == "" && previousVersion == "" {
 		return nil, nil
 	}
-	if schema < 31 {
+	if schema < 35 {
 		return nil, errors.New("DV3 PIN requires compatible schema")
 	}
-	current, err := strconv.Atoi(currentVersion)
+	current, err := strconv.ParseInt(currentVersion, 10, 32)
 	key, keyErr := hex.DecodeString(currentKey)
-	previous := 0
+	previous := int64(0)
 	if previousVersion != "" {
-		previous, err = parsePINPrevious(previousVersion, err)
+		var previousErr error
+		previous, previousErr = strconv.ParseInt(previousVersion, 10, 32)
+		if previousErr != nil || previous < 1 {
+			return nil, identity.ErrPINKey
+		}
 	}
 	old, oldErr := hex.DecodeString(previousKey)
 	if err != nil || keyErr != nil || oldErr != nil {
 		return nil, identity.ErrPINKey
 	}
-	return identity.NewPIN(db, fingerprint, current, key, previous, old, devices.EndMemberContexts)
-}
-
-func parsePINPrevious(raw string, currentErr error) (int, error) {
-	if currentErr != nil {
-		return 0, currentErr
-	}
-	version, err := strconv.Atoi(raw)
-	if err != nil || version < 1 {
-		return 0, identity.ErrPINKey
-	}
-	return version, nil
+	return identity.NewPIN(db, fingerprint, int(current), key, int(previous), old, devices.EndMemberContexts)
 }

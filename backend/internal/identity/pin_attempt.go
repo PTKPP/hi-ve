@@ -19,8 +19,10 @@ type PINAttempt struct {
 
 func (s *PIN) LockCredential(ctx context.Context, tx pgx.Tx, tenant, member string) (PINAttempt, error) {
 	var out PINAttempt
-	err := tx.QueryRow(ctx, `SELECT revision,pepper_version,salt,verifier FROM hive.member_pin_credentials
-        WHERE tenant_id=$1 AND member_id=$2 AND verifier IS NOT NULL FOR NO KEY UPDATE`, tenant, member).
+	err := tx.QueryRow(ctx, `SELECT c.revision,c.pepper_version,c.salt,c.verifier FROM hive.member_pin_credentials c
+        JOIN hive.tenant_memberships m ON m.tenant_id=c.tenant_id AND m.principal_id=c.member_id
+        WHERE c.tenant_id=$1 AND c.member_id=$2 AND c.verifier IS NOT NULL AND c.membership_revision=m.lifecycle_revision
+        FOR NO KEY UPDATE OF c`, tenant, member).
 		Scan(&out.revision, &out.pepper, &out.salt, &out.verifier)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return out, ErrPINIneligible
@@ -97,7 +99,7 @@ func (s *PIN) EligibleProfiles(ctx context.Context, tx pgx.Tx, tenant, outlet st
         JOIN hive.member_pin_credentials c USING(tenant_id,member_id)
         JOIN hive.tenant_memberships m ON m.tenant_id=p.tenant_id AND m.principal_id=p.member_id
         WHERE p.tenant_id=$1 AND p.member_id=ANY($2::text[]::uuid[]) AND m.active AND m.role<>'primary_owner'
-          AND c.verifier IS NOT NULL AND c.pepper_version=ANY($4::int[])
+          AND c.verifier IS NOT NULL AND c.membership_revision=m.lifecycle_revision AND c.pepper_version=ANY($4::int[])
           AND EXISTS (SELECT 1 FROM hive.tenant_location_role_assignments a
             JOIN hive.tenant_role_location_actions r USING(tenant_id,role_id)
             WHERE a.tenant_id=p.tenant_id AND a.member_id=p.member_id AND a.location_id=$3 AND r.action='devices.operators.use')
@@ -110,8 +112,9 @@ func (s *PIN) EligibleProfiles(ctx context.Context, tx pgx.Tx, tenant, outlet st
 
 func (s *PIN) ContextCredentialActive(ctx context.Context, tx pgx.Tx, tenant, member string, revision int64) (bool, error) {
 	var version int
-	err := tx.QueryRow(ctx, `SELECT pepper_version FROM hive.member_pin_credentials WHERE tenant_id=$1 AND member_id=$2
-       AND revision=$3 AND verifier IS NOT NULL`, tenant, member, revision).Scan(&version)
+	err := tx.QueryRow(ctx, `SELECT c.pepper_version FROM hive.member_pin_credentials c
+       JOIN hive.tenant_memberships m ON m.tenant_id=c.tenant_id AND m.principal_id=c.member_id
+       WHERE c.tenant_id=$1 AND c.member_id=$2 AND c.revision=$3 AND c.verifier IS NOT NULL AND c.membership_revision=m.lifecycle_revision`, tenant, member, revision).Scan(&version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

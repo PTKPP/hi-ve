@@ -307,7 +307,7 @@ func m5MigrationDir(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	files, err := filepath.Glob(filepath.Join(m5BackendRoot(t), "migrations", "*.sql"))
-	if err != nil || len(files) != 29 || filepath.Base(files[28]) != "029_m5_contract.sql" {
+	if err != nil || len(files) < 29 || filepath.Base(files[28]) != "029_m5_contract.sql" {
 		t.Fatal("the rehearsal is anchored to schema 028")
 	}
 	for _, path := range files[:28] {
