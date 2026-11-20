@@ -349,4 +349,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
