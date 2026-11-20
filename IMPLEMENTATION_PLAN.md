@@ -366,6 +366,17 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | Bukti dan status AC | **PASS pada slice** untuk Owner/tenant isolation, deny staf/PIN/Platform, minimisasi respons, cursor manipulation/replay, pembacaan saat append, dan pencabutan sesi konkuren. `TestLocationGrantsPostgres` kini permanen menguji event tunggal pada retry, rollback grant/revision saat audit gagal, dan lokasi asal saat deaktivasi. PostgreSQL disposable, format, vet, build, race, architecture guard dan preflight Compose **PASS lokal**. [CI HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks) |
 | Pekerjaan tersisa | `FR-HV-AUD-002/AC-01–03` tetap **PARTIAL** pada lingkup P0 penuh. Reader ini mencakup satu action, sedangkan producer izin biaya/HPP, Sales, Reports/ekspor dan UAT-HV-09 tetap mengikuti domain pemilik. AC-04 **BLOCKED** oleh OPEN-006. S3-G AC-02 tetap **PARTIAL/BLOCKED** sampai key dan consumer disetujui. Phase 02 **IN PROGRESS** dan Issue #9 **OPEN**. |
 
+## Increment 02.33 · Analisis dan rekomendasi OPEN-006
+
+| Gate | Hasil dan kelanjutan |
+|---|---|
+| Baseline | Draft PR #3 pada `8b13b923aab6ba95e3af0b736fd8aa62f257d97f`, schema 035. Review dokumen dan source saja; tidak ada purge, penghapusan data, perubahan migrasi atau PRD. CAP-55–58, FR-HV-AUD-002/AC-01–04 dan scope P0 V1 tidak berubah. [Issue #9](https://github.com/PTKPP/hi-ve/issues/9) |
+| Klasifikasi | **A** histori login operasional (`online_login_history`, `operator_login_history`) 168 jam **APPROVED** dan tidak diubah. **B** critical security audit (provisioning, RBAC/grant, entitlement, membership, device pairing/context, PIN management, logout, location, receipt settings, serta producer biaya/ekspor/posting/recovery berikutnya) tanpa retensi/purge, runtime hanya `INSERT`/`SELECT`. **C** histori transaksi bisnis tidak pernah dipurge oleh job audit. |
+| Temuan | Append-only hanya bergantung privilege; belum ada trigger guard dan privilege target NOT VERIFIED (OPEN-015). Tabel kelas B tanpa index purge dan tanpa partisi. FK RESTRICT dari audit menahan hard-delete membership/device/lokasi/tenant. Semua waktu audit berasal dari server; ingest offline belum ada. |
+| Rekomendasi · PROPOSED | Kelas B 24 bulan dari waktu server di PostgreSQL primer, legal hold oleh Security/Ops, purge hanya lewat job dengan role `hive_audit_retention` dan fungsi `SECURITY DEFINER` fail-safe, tanpa endpoint. Waktu klien disimpan sebagai klaim dengan flag skew. Celah offline dideteksi lewat urutan monoton per device dan event `audit.offline_gap_detected`. Estimasi ≈0,45 GB (pilot) sampai ≈45 GB (5.000 tenant) per 24 bulan; partisi bulanan hanya saat ambang kapasitas. Regulasi (UU PDP, PP 71/2019, UU KUP) perlu konfirmasi legal. |
+| Decision matrix | D6-1 kelas, D6-2 periode, D6-3 skew, D6-5 privilege/purge, D6-6 legal hold, D6-8 hak hapus **perlu approval**. D6-4 gap offline **NO-GO Phase 02** → Phase 06. D6-7 backup/restore target **NO-GO** sampai OPEN-015. D6-9 retensi transaksi bisnis butuh ID keputusan baru. Implementasi purge **NO-GO** sampai D6-1/2/5/6 approved. Acceptance P1–P8 dan N1–N8 tercatat pada Issue #9. |
+| Next action | Product Owner + Security/Ops memutuskan D6-1–D6-9. Setelah approval: O6-a migrasi aditif (index, ledger, legal hold, trigger, role), O6-b job purge + monitoring, lalu ingest offline Phase 06 dan verifikasi restore target. OPEN-006 tetap **OPEN**, AC-04 tetap **BLOCKED**, Phase 02 **IN PROGRESS**, Draft PR #3 tetap draft. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -407,3 +418,4 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | 02.30 | Rekomendasi OPEN-013 dipublikasikan. NO-GO switch pada Phase 02. Sequencing ke Phase 06 dan recovery menunggu persetujuan. |
 | 02.31 | S3-G/A disetujui pada arah kontrak. Bukti producer existing dan acceptance P0 tertunda dipetakan pada Issue #9. |
 | 02.32 | Reader Audit access-control dan tes producer grant lokasi selesai pada scope yang disetujui. Gate P0 lintas domain, OPEN-006 dan S3-G tetap terbuka. |
+| 02.33 | Rekomendasi OPEN-006 dan decision matrix D6-1–D6-9 disusun. Implementasi purge NO-GO sampai approval Product Owner + Security/Ops. |
