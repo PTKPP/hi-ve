@@ -504,6 +504,11 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 // EndOutletContexts runs after Locations locks the outlet for deactivation.
 // Marking contexts ended prevents a later reactivation from reviving old sessions.
 func (s Service) EndOutletContexts(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
-	_, err := tx.Exec(ctx, `UPDATE hive.operational_contexts SET ended_at=clock_timestamp() WHERE tenant_id=$1 AND outlet_id=$2 AND ended_at IS NULL`, tenant, outlet)
+	// Match EndMemberContexts when both revocations select the same rows.
+	_, err := tx.Exec(ctx, `WITH targets AS (
+        SELECT device_id,id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND outlet_id=$2 AND ended_at IS NULL ORDER BY device_id,id FOR UPDATE
+    ) UPDATE hive.operational_contexts c SET ended_at=clock_timestamp()
+      FROM targets WHERE c.tenant_id=$1 AND c.device_id=targets.device_id AND c.id=targets.id`, tenant, outlet)
 	return err
 }

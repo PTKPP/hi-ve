@@ -2,14 +2,17 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -368,15 +371,64 @@ func TestOperatorPINPostgres(t *testing.T) {
 		t.Fatal("deactivation and issuance left a live context")
 	}
 
-	// A restored outlet must require a fresh login even when the PIN and role are unchanged.
+	// Start two live contexts in reverse lock order to cover cancellation racing
+	// for the same member's contexts across devices.
 	freshMember := makeMember("pin-outlet-lifecycle", "456789")
-	deviceRevision := int64(2)
-	fresh := login(device, outlet, freshMember, "456789", deviceRevision, 201)
+	orderedDevices := []string{device, otherDevice}
+	slices.Sort(orderedDevices)
+	var fresh *httptest.ResponseRecorder
+	for _, deviceID := range []string{orderedDevices[1], orderedDevices[0]} {
+		var revision int64
+		if err := db.QueryRow(ctx, `SELECT context_revision FROM hive.devices WHERE tenant_id=$1 AND id=$2`, tenant, deviceID).Scan(&revision); err != nil {
+			t.Fatal(err)
+		}
+		response := login(deviceID, outlet, freshMember, "456789", revision, 201)
+		if deviceID == device {
+			fresh = response
+		}
+	}
 	var active devices.OperationalContext
 	if err := json.Unmarshal(fresh.Body.Bytes(), &active); err != nil {
 		t.Fatal(err)
 	}
-	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: svc.EndOutletContexts}
+	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: func(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
+		// A heap scan encounters the two fixtures in insertion order.
+		if _, err := tx.Exec(ctx, `SET LOCAL enable_indexscan=off; SET LOCAL enable_bitmapscan=off`); err != nil {
+			return err
+		}
+		return svc.EndOutletContexts(ctx, tx, tenant, outlet)
+	}}
+	first, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Rollback(ctx)
+	if _, err = first.Exec(ctx, `SELECT id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND device_id=$2 AND ended_at IS NULL FOR UPDATE`, tenant, orderedDevices[0]); err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	go func() {
+		revision := int64(0)
+		_, err := loc.SetStatus(ctx, tenant, owner.Value, outlet, "location-state-inactive", locations.StatusInput{Status: "inactive", Revision: &revision})
+		ended <- err
+	}()
+	waitForBlocked(t, db, first.Conn().PgConn().PID())
+	// With consistent ordering the outlet writer waits for the first context
+	// before it can lock the second one.
+	if _, err = first.Exec(ctx, `SELECT id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND device_id=$2 AND ended_at IS NULL FOR UPDATE NOWAIT`, tenant, orderedDevices[1]); err != nil {
+		t.Fatal("outlet cancellation acquired context locks out of order", err)
+	}
+	if err = first.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-ended; err != nil {
+		t.Fatal(err)
+	}
+	if count := id(`SELECT count(*)::text FROM hive.operational_contexts WHERE tenant_id=$1 AND outlet_id=$2 AND ended_at IS NULL`, tenant, outlet); count != "0" {
+		t.Fatal("deactivation left an active context")
+	}
 	for revision, status := range []string{"inactive", "active"} {
 		rev := int64(revision)
 		if _, err := loc.SetStatus(ctx, tenant, owner.Value, outlet, "location-state-"+status, locations.StatusInput{Status: status, Revision: &rev}); err != nil {
