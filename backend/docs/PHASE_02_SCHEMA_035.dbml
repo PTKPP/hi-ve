@@ -1,0 +1,876 @@
+// Hi-Ve SaaS | As-built relational model (migrations 001-035).
+// Repository PTKPP/hi-ve @ 37d3681aefbc40cd59c3ae143d962133563c310a.
+// Sumber: SQL 001-028 dari log Tern development yang dilampirkan pengguna;
+//          SQL 029-035 dari GitHub pada SHA yang sama jika snapshot 035.
+// Ini adalah DOKUMENTASI review, bukan migration SQL atau persetujuan desain.
+// Database Compose development yang dibuktikan pengguna hanya schema version 028.
+// CATATAN: PostgreSQL CHECK, trigger, view, deferrable FK, partial index dan
+// invariants transaksi tidak semuanya dapat diproyeksikan sempurna oleh DBML.
+// Selalu gunakan migration SQL sebagai sumber kebenaran.
+
+
+Project HI_VE_PHASE_02 {
+  database_type: "PostgreSQL"
+  Note: "Snapshot PostgreSQL hive hingga migrasi 35. Pada 035, FK Google-only dihapus pada 029 dan PIN staf ditambahkan 030-035. Dev Compose persisten dibatasi 028. DBML bukan DDL deploy."
+}
+
+Table hive.tenants {
+  Note: "Owner: Platform. Tenant organisasi dan status lifecycle platform. Dibuat: 002_platform_provisioning.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  display_name text [not null, note: "Label tampilan yang dapat dibaca manusia."]
+  status text [not null, note: "Status lifecycle. CHECK kolom: CHECK status IN ('pending', 'active', 'suspended', 'closed')"]
+}
+
+Table hive.owner_candidates {
+  Note: "Owner: Platform. Calon Primary Owner yang dipilih saat provisioning tenant. Dibuat: 002_platform_provisioning.sql."
+  tenant_id uuid [pk, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  id uuid [not null, unique, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  contact_email text [not null, note: "Email kontak calon Owner."]
+  indexes {
+    (tenant_id, id) [unique]
+  }
+}
+
+Table hive.owner_invitations {
+  Note: "Owner: Platform. Undangan sekali pakai untuk aktivasi Primary Owner. Dibuat: 002_platform_provisioning.sql."
+  tenant_id uuid [pk, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  owner_id uuid [not null, note: "ID calon Primary Owner."]
+  generation uuid [not null, unique, note: "Identitas generasi undangan/proses. DEFAULT SQL: gen_random_uuid()."]
+  digest bytea [not null, unique, note: "Digest kode undangan Owner, tidak menyimpan kode mentah. CHECK kolom: CHECK octet_length(digest) = 32"]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  claimed_at timestamptz [note: "Waktu undangan diklaim oleh penerima."]
+  indexes {
+    (tenant_id, owner_id, generation) [unique]
+  }
+}
+
+Table hive.provisioning_receipts {
+  Note: "Owner: Platform. Receipt idempotency untuk create/activate provisioning. Dibuat: 002_platform_provisioning.sql."
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  operation text [not null, note: "Nama operasi dan cakupan receipt. CHECK kolom: CHECK operation IN ('create', 'activate')"]
+  target text [not null, note: "Target mutasi idempotent."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint) = 32"]
+  tenant_id uuid [note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  owner_id uuid [note: "ID calon Primary Owner."]
+  indexes {
+    (actor_id, operation, target, request_key) [pk]
+  }
+}
+
+Table hive.google_principals {
+  Note: "Owner: Identity. Identitas Google OIDC yang ditautkan menggunakan issuer dan subject. Dibuat: 003_identity_provisioning.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  issuer text [not null, note: "Penerbit identitas OIDC."]
+  subject text [not null, note: "Subjek identitas stabil dari OIDC."]
+  indexes {
+    (issuer, subject) [unique]
+  }
+}
+
+Table hive.platform_principals {
+  Note: "Owner: Identity. Identitas Superadmin/platform yang diizinkan. Dibuat: 003_identity_provisioning.sql."
+  principal_id uuid [pk, note: "ID principal identitas."]
+  active boolean [not null, note: "Indikator status aktif. DEFAULT SQL: true."]
+}
+
+Table hive.platform_permissions {
+  Note: "Owner: Identity. Hak tindakan pada sisi administrasi platform. Dibuat: 003_identity_provisioning.sql."
+  principal_id uuid [not null, note: "ID principal identitas."]
+  permission text [not null, note: "Atribut permission pada platform_permissions."]
+  indexes {
+    (principal_id, permission) [pk]
+  }
+}
+
+Table hive.owner_claims {
+  Note: "Owner: Identity. Klaim aktivasi Owner yang dibatasi generasi dan masa berlaku. Dibuat: 003_identity_provisioning.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  owner_id uuid [not null, note: "ID calon Primary Owner."]
+  generation uuid [not null, unique, note: "Identitas generasi undangan/proses."]
+  issuer text [not null, note: "Penerbit identitas OIDC."]
+  subject text [not null, note: "Subjek identitas stabil dari OIDC."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  consumed_at timestamptz [note: "Waktu claim aktivasi digunakan."]
+}
+
+Table hive.tenant_memberships {
+  Note: "Owner: Identity. Relasi principal netral dengan tenant, role dasar, dan status keanggotaan. Dibuat: 003_identity_provisioning.sql. Migration 029 menghapus FK Google-only (principal_id -> google_principals), tetapi FK netral tetap."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  principal_id uuid [not null, note: "ID principal identitas."]
+  owner_id uuid [note: "ID calon Primary Owner."]
+  role text [not null, note: "Role keanggotaan."]
+  active boolean [not null, note: "Indikator status aktif. DEFAULT SQL: true."]
+  lifecycle_revision bigint [not null, note: "Versi perubahan lifecycle member. DEFAULT SQL: 0. CHECK kolom: CHECK lifecycle_revision >= 0"]
+  owner_google_principal_id uuid [note: "Referensi Google khusus Primary Owner; bukan keharusan bagi staf non-Owner."]
+  indexes {
+    (tenant_id, principal_id) [pk]
+    tenant_id [name: "tenant_active_primary_owner", note: "Partial UNIQUE index. WHERE active AND role = 'primary_owner' (representasi diagram tidak memaksakan partial uniqueness)"]
+  }
+}
+
+Table hive.platform_sessions {
+  Note: "Owner: Identity. Session token digest Superadmin; token mentah tidak disimpan. Dibuat: 003_identity_provisioning.sql."
+  digest bytea [pk, note: "Digest sesi platform. CHECK kolom: CHECK octet_length(digest) = 32"]
+  principal_id uuid [not null, note: "ID principal identitas."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  indexes {
+    expires_at [name: "platform_sessions_expiry"]
+  }
+}
+
+Table hive.tenant_sessions {
+  Note: "Owner: Identity. Session token digest login tenant Google Owner (historis auth_method tetap ada). Dibuat: 003_identity_provisioning.sql."
+  digest bytea [pk, note: "Digest sesi Google tenant. CHECK kolom: CHECK octet_length(digest) = 32"]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  principal_id uuid [not null, note: "ID principal identitas."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  auth_method text [not null, note: "Atribut auth method pada tenant_sessions. DEFAULT SQL: 'google'. CHECK kolom: CHECK auth_method IN ('google','device_pin')"]
+  indexes {
+    expires_at [name: "tenant_sessions_expiry"]
+    (tenant_id, principal_id) [name: "tenant_sessions_membership"]
+  }
+}
+
+Table hive.oidc_flows {
+  Note: "Owner: Identity. State/nonce/verifier untuk proses login Google OIDC berumur singkat. Dibuat: 003_identity_provisioning.sql."
+  state_digest bytea [pk, note: "Digest state OIDC. CHECK kolom: CHECK octet_length(state_digest) = 32"]
+  browser_digest bytea [not null, note: "Digest pengikat browser OIDC. CHECK kolom: CHECK octet_length(browser_digest) = 32"]
+  nonce text [not null, note: "Nonce/proof challenge sekali pakai."]
+  verifier text [not null, note: "PKCE code verifier OIDC; bukan verifier PIN."]
+  purpose text [not null, note: "Atribut purpose pada oidc_flows."]
+  tenant_id uuid [note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  generation uuid [note: "Identitas generasi undangan/proses."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  event_id uuid [not null, note: "ID unik event audit/history. DEFAULT SQL: gen_random_uuid()."]
+  indexes {
+    (event_id) [unique]
+    expires_at [name: "oidc_flows_expiry"]
+  }
+}
+
+Table hive.provisioning_audit {
+  Note: "Owner: Audit. Audit aktivitas provisioning dan verifikasi organisasi. Dibuat: 004_provisioning_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  actor_id uuid [note: "ID pelaku tindakan yang melakukan operasi."]
+  tenant_id uuid [note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  claim_id uuid [note: "ID klaim aktivasi Owner."]
+  action text [not null, note: "Jenis tindakan yang diaudit."]
+  outcome text [not null, note: "Hasil tindakan atau autentikasi. CHECK kolom: CHECK outcome IN ('succeeded', 'denied')"]
+  verification_method text [note: "Metode verifikasi organisasi."]
+  verification_reference text [note: "Referensi bukti verifikasi organisasi."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+}
+
+Table hive.tenant_rbac_revisions {
+  Note: "Owner: Identity. Versi perubahan kebijakan RBAC pada tenant. Dibuat: 006_identity_tenant_rbac.sql."
+  tenant_id uuid [pk, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. DEFAULT SQL: 0. CHECK kolom: CHECK revision >= 0"]
+}
+
+Table hive.tenant_roles {
+  Note: "Owner: Identity. Custom role/role_key yang dikelola dalam tenant. Dibuat: 006_identity_tenant_rbac.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  id uuid [not null, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  role_key text [not null, note: "Kode role tenant. CHECK kolom: CHECK role_key NOT IN ('primary_owner', 'primary-owner')"]
+  name text [not null, note: "Nama yang ditampilkan."]
+  indexes {
+    (tenant_id, id) [pk]
+    (tenant_id, role_key) [unique]
+  }
+}
+
+Table hive.tenant_role_actions {
+  Note: "Owner: Identity. Daftar action permission tingkat tenant pada role. Dibuat: 006_identity_tenant_rbac.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  role_id uuid [not null, note: "ID custom role tenant."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action = 'identity.roles.read'"]
+  indexes {
+    (tenant_id, role_id, action) [pk]
+  }
+}
+
+Table hive.tenant_role_assignments {
+  Note: "Owner: Identity. Penetapan role tenant ke member/principal. Dibuat: 006_identity_tenant_rbac.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  principal_id uuid [not null, note: "ID principal identitas."]
+  role_id uuid [not null, note: "ID custom role tenant."]
+  indexes {
+    (tenant_id, principal_id, role_id) [pk]
+  }
+}
+
+Table hive.tenant_role_create_receipts {
+  Note: "Owner: Identity. Receipt idempotency pembuatan role. Dibuat: 006_identity_tenant_rbac.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint) = 32"]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.tenant_rbac_audit {
+  Note: "Owner: Audit. Histori perubahan role, assignment, dan scope lokasi. Dibuat: 007_rbac_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  target_id uuid [not null, note: "Atribut target id pada tenant_rbac_audit."]
+  action text [not null, note: "Jenis mutasi RBAC; daftar action diperluas pada migration 021."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision > 0"]
+  before_state jsonb [not null, note: "Snapshot kebijakan sebelum perubahan."]
+  after_state jsonb [not null, note: "Snapshot kebijakan setelah perubahan."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, revision) [unique]
+  }
+}
+
+Table hive.tenant_entitlements {
+  Note: "Owner: Platform. Hak capability/produk tenant dengan jendela berlaku dan revision. Dibuat: 008_platform_entitlements.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  capability_id text [not null, note: "ID capability kanonis. CHECK kolom: CHECK length(capability_id) > 0"]
+  effective_at timestamptz [not null, note: "Mulai jendela entitlement."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa. CHECK kolom: CHECK expires_at > effective_at"]
+  source_reference text [not null, note: "Referensi asal entitlement."]
+  revoked_at timestamptz [note: "Waktu pencabutan (null jika belum revoked)."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision > 0"]
+  indexes {
+    (tenant_id, capability_id) [pk]
+  }
+}
+
+Table hive.tenant_entitlement_history {
+  Note: "Owner: Platform. Snapshot riwayat perubahan entitlement. Dibuat: 008_platform_entitlements.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  capability_id text [not null, note: "ID capability kanonis."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit."]
+  snapshot jsonb [not null, note: "Snapshot JSON riwayat entitlement, bukan state otoritatif saat ini."]
+  recorded_at timestamptz [not null, note: "Waktu snapshot dicatat. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, capability_id, revision) [pk]
+  }
+}
+
+Table hive.tenant_entitlement_receipts {
+  Note: "Owner: Platform. Receipt idempotency grant/revoke entitlement. Dibuat: 008_platform_entitlements.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  capability_id text [not null, note: "ID capability kanonis."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  operation text [not null, note: "Nama operasi dan cakupan receipt. CHECK kolom: CHECK operation IN ('grant','revoke')"]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, capability_id, actor_id, operation, request_key) [pk]
+  }
+}
+
+Table hive.entitlement_audit {
+  Note: "Owner: Audit. Audit perubahan hak capability tenant. Dibuat: 009_entitlement_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  capability_id text [not null, note: "ID capability kanonis."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action IN ('grant','revoke')"]
+  previous_revision bigint [not null, note: "Atribut previous revision pada entitlement_audit."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision=previous_revision+1"]
+  reason_code text [note: "Kode alasan operasional."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, capability_id, revision) [unique]
+  }
+}
+
+Table hive.membership_lifecycle_receipts {
+  Note: "Owner: Identity. Receipt idempotency deactivate/reactivate member. Dibuat: 010_identity_membership_lifecycle.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  operation text [not null, note: "Nama operasi dan cakupan receipt. CHECK kolom: CHECK operation IN ('deactivate','reactivate')"]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, actor_id, member_id, operation, request_key) [pk]
+  }
+}
+
+Table hive.membership_lifecycle_audit {
+  Note: "Owner: Audit. Audit lifecycle member, sesi yang dicabut, dan role terdampak. Dibuat: 011_membership_lifecycle_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action IN ('deactivate','reactivate')"]
+  previous_active boolean [not null, note: "Atribut previous active pada membership_lifecycle_audit."]
+  active boolean [not null, note: "Indikator status aktif. CHECK kolom: CHECK active <> previous_active"]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision>0"]
+  reason_code text [not null, note: "Kode alasan operasional."]
+  revoked_sessions bigint [not null, note: "Atribut revoked sessions pada membership_lifecycle_audit. CHECK kolom: CHECK revoked_sessions>=0"]
+  revoked_roles jsonb [not null, note: "Atribut revoked roles pada membership_lifecycle_audit."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, member_id, revision) [unique]
+  }
+}
+
+Table hive.identity_principals {
+  Note: "Owner: Identity. Anchor ID identitas netral agar staf tidak wajib memiliki Google. Dibuat: 012_identity_principal_expand.sql."
+  id uuid [pk, note: "ID unik entitas ini."]
+}
+
+Table hive.locations {
+  Note: "Owner: Locations. Master outlet/gudang tenant berikut jenis dan status. Dibuat: 013_locations_foundation.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  id uuid [not null, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  code text [not null, note: "Kode unik bisnis (dalam scope yang ditetapkan). CHECK kolom: CHECK code ~ '^[a-z0-9][a-z0-9_-]{0,63}$'"]
+  name text [not null, note: "Nama yang ditampilkan. CHECK kolom: CHECK octet_length(name) BETWEEN 1 AND 128"]
+  kind text [not null, note: "Atribut kind pada locations. CHECK kolom: CHECK kind IN ('outlet','warehouse')"]
+  status text [not null, note: "Status lifecycle. DEFAULT SQL: 'active'. CHECK kolom: CHECK status IN ('active','inactive')"]
+  indexes {
+    (tenant_id, id) [pk]
+    (tenant_id, code) [unique, name: "locations_tenant_code_unique"]
+  }
+}
+
+Table hive.location_create_receipts {
+  Note: "Owner: Locations. Receipt idempotency pembuatan lokasi. Dibuat: 013_locations_foundation.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.location_create_audit {
+  Note: "Owner: Audit. Audit pembuatan outlet/gudang. Dibuat: 014_location_audit.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  location_id uuid [not null, note: "ID outlet/gudang."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  kind text [not null, note: "Atribut kind pada location_create_audit. CHECK kolom: CHECK kind IN ('outlet','warehouse')"]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, location_id) [pk]
+  }
+}
+
+Table hive.session_logout_audit {
+  Note: "Owner: Audit. Audit logout eksplisit platform atau tenant. Dibuat: 015_session_logout_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  scope text [not null, note: "Kategori rate limit atau konteks. CHECK kolom: CHECK scope IN ('platform','tenant')"]
+  tenant_id uuid [note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+}
+
+Table hive.device_pairings {
+  Note: "Owner: Devices. Challenge pairing awal, public key, verifikasi, dan batas percobaan. Dibuat: 016_devices_online_pairing.sql."
+  id text [pk, note: "ID unik entitas ini. CHECK kolom: CHECK id ~ '^[0-9a-f]{48}$'"]
+  public_key jsonb [not null, note: "Public key P-256 yang terdaftar."]
+  thumbprint bytea [not null, note: "Sidik jari public key perangkat. CHECK kolom: CHECK octet_length(thumbprint)=32"]
+  start_key text [not null, note: "Kunci idempotency awal pairing."]
+  code_key_id text [not null, note: "ID key/versi kode pairing."]
+  nonce text [not null, note: "Nonce/proof challenge sekali pakai."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa. DEFAULT SQL: clock_timestamp()+interval '10 minutes'."]
+  tenant_id uuid [note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [note: "ID pelaku tindakan yang melakukan operasi."]
+  approval_key text [note: "Kunci idempotency persetujuan pairing."]
+  approval_fingerprint bytea [note: "Fingerprint request approval pairing."]
+  redeem_key text [note: "Kunci idempotency redeem pairing."]
+  redeem_proof bytea [note: "Bukti redeem pairing."]
+  bad_codes smallint [not null, note: "Jumlah kode pairing salah. DEFAULT SQL: 0. CHECK kolom: CHECK bad_codes BETWEEN 0 AND 5"]
+  bad_proofs smallint [not null, note: "Jumlah proof pairing salah. DEFAULT SQL: 0. CHECK kolom: CHECK bad_proofs BETWEEN 0 AND 5"]
+  indexes {
+    (thumbprint, start_key) [unique]
+    (tenant_id, id) [unique]
+    (expires_at, id) [name: "device_pairings_expiry"]
+  }
+}
+
+Table hive.device_pairing_outlets {
+  Note: "Owner: Devices. Outlet yang diizinkan selama proses pairing. Dibuat: 016_devices_online_pairing.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  pairing_id text [not null, note: "ID permintaan pairing."]
+  outlet_id uuid [not null, note: "ID outlet lokasi."]
+  indexes {
+    (tenant_id, pairing_id, outlet_id) [pk]
+  }
+}
+
+Table hive.devices {
+  Note: "Owner: Devices. Registrasi perangkat teraktivasi, public key dan status revoke. Dibuat: 016_devices_online_pairing.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  id uuid [not null, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  pairing_id text [not null, unique, note: "ID permintaan pairing."]
+  public_key jsonb [not null, note: "Public key P-256 yang terdaftar."]
+  thumbprint bytea [not null, note: "Sidik jari public key perangkat. CHECK kolom: CHECK octet_length(thumbprint)=32"]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. DEFAULT SQL: 1. CHECK kolom: CHECK revision > 0"]
+  revoked_at timestamptz [note: "Waktu pencabutan (null jika belum revoked)."]
+  context_revision bigint [not null, note: "Versi sesi/konteks operasional perangkat. DEFAULT SQL: 0. CHECK kolom: CHECK context_revision>=0"]
+  last_outlet_id uuid [note: "Outlet asal yang dipin pada perangkat."]
+  indexes {
+    (tenant_id, id) [pk]
+    thumbprint [name: "devices_active_key", note: "Partial UNIQUE index. WHERE revoked_at IS NULL (representasi diagram tidak memaksakan partial uniqueness)"]
+  }
+}
+
+Table hive.device_outlets {
+  Note: "Owner: Devices. Daftar outlet yang diberikan Owner kepada perangkat. Dibuat: 016_devices_online_pairing.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  outlet_id uuid [not null, note: "ID outlet lokasi."]
+  indexes {
+    (tenant_id, device_id, outlet_id) [pk]
+  }
+}
+
+Table hive.device_pairing_limits {
+  Note: "Owner: Devices. Batas rate berbagai operasi perangkat (pairing, proof, PIN). Dibuat: 016_devices_online_pairing.sql."
+  scope text [not null, note: "Kategori rate-limit; daftar scope diperluas oleh migration 022 dan 032. Lihat constraint terbaru pada SQL."]
+  subject bytea [not null, note: "Hash identifier rate-limit (bukan subject Google). CHECK kolom: CHECK octet_length(subject)=32"]
+  updated_at timestamptz [not null, note: "Waktu pembaruan. DEFAULT SQL: clock_timestamp()."]
+  attempts timestamptz[] [not null, note: "Sliding-window timestamp rate-limit; batas final cardinality 600 dari migration 022. DEFAULT SQL: ARRAY[]::timestamptz[]."]
+  indexes {
+    (scope, subject) [pk]
+    updated_at [name: "device_pairing_limits_window"]
+  }
+}
+
+Table hive.device_revoke_receipts {
+  Note: "Owner: Devices. Receipt idempotency revoke perangkat. Dibuat: 016_devices_online_pairing.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  expected_revision bigint [not null, note: "Versi state yang diharapkan pemanggil."]
+  result_revision bigint [not null, note: "Versi state hasil perubahan."]
+  indexes {
+    (tenant_id, device_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.device_pairing_audit {
+  Note: "Owner: Audit. Audit approval, redeem, dan revoke perangkat. Dibuat: 017_device_pairing_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action IN ('approved','redeemed','revoked')"]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  pairing_id text [not null, note: "ID permintaan pairing."]
+  device_id uuid [note: "ID perangkat teraktivasi."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+}
+
+Table hive.online_login_history {
+  Note: "Owner: Audit. Histori operasional login Google Owner dalam jendela 168 jam. Dibuat: 019_online_login_history.sql."
+  event_id uuid [pk, note: "ID unik event audit/history."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  flow_class text [not null, note: "Jenis autentikasi pada histori login. CHECK kolom: CHECK flow_class='tenant_owner_google'"]
+  outcome text [not null, note: "Hasil tindakan atau autentikasi. CHECK kolom: CHECK outcome IN ('success','denied')"]
+  received_at timestamptz [not null, note: "Waktu diterima server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, received_at [desc], event_id [desc]) [name: "online_login_history_tenant_page"]
+    (received_at, event_id) [name: "online_login_history_expiry"]
+  }
+}
+
+Table hive.tenant_role_location_actions {
+  Note: "Owner: Identity. Action permission role yang berlaku pada lokasi. Dibuat: 020_identity_location_grants.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  role_id uuid [not null, note: "ID custom role tenant."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action='devices.operators.use'"]
+  indexes {
+    (tenant_id, role_id, action) [pk]
+  }
+}
+
+Table hive.tenant_location_role_assignments {
+  Note: "Owner: Identity. Role lokasi yang diberikan kepada member. Dibuat: 020_identity_location_grants.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  role_id uuid [not null, note: "ID custom role tenant."]
+  location_id uuid [not null, note: "ID outlet/gudang."]
+  indexes {
+    (tenant_id, member_id, location_id, role_id) [pk]
+  }
+}
+
+Table hive.location_rbac_receipts {
+  Note: "Owner: Identity. Receipt idempotency perubahan role/grant berbasis lokasi. Dibuat: 020_identity_location_grants.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  target_id uuid [not null, note: "Atribut target id pada location_rbac_receipts."]
+  operation text [not null, note: "Nama operasi dan cakupan receipt. CHECK kolom: CHECK operation IN ('role.location_actions.replace','membership.location_roles.replace')"]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi."]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, actor_id, target_id, operation, request_key) [pk]
+  }
+}
+
+Table hive.device_operator_assignments {
+  Note: "Owner: Devices. Operator yang ditugaskan Owner pada perangkat dan outlet. Dibuat: 022_devices_operational_context.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  outlet_id uuid [not null, note: "ID outlet lokasi."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  indexes {
+    (tenant_id, device_id, outlet_id, member_id) [pk]
+    (tenant_id, member_id) [name: "device_operator_member"]
+  }
+}
+
+Table hive.operational_contexts {
+  Note: "Owner: Devices. Sesi operator aktif/terakhir pada device/outlet; memiliki revision dan expiry. Dibuat: 022_devices_operational_context.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  id uuid [not null, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  outlet_id uuid [not null, note: "ID outlet lokasi."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  digest bytea [not null, unique, note: "Digest cookie sesi operator; token cookie tidak disimpan. CHECK kolom: CHECK octet_length(digest)=32"]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision>0"]
+  device_revision bigint [not null, note: "Versi perangkat yang diikat pada operasi. CHECK kolom: CHECK device_revision>0"]
+  idle_expires_at timestamptz [not null, note: "Waktu kedaluwarsa karena idle."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa."]
+  ended_at timestamptz [note: "Waktu penutupan konteks."]
+  credential_revision bigint [note: "Versi kredensial PIN yang diterbitkan pada konteks. CHECK kolom: CHECK credential_revision > 0"]
+  indexes {
+    (tenant_id, device_id, id) [pk]
+    (tenant_id, device_id, revision) [unique]
+    (tenant_id, device_id) [name: "one_open_device_context", note: "Partial UNIQUE index. WHERE ended_at IS NULL (representasi diagram tidak memaksakan partial uniqueness)"]
+    (tenant_id, member_id) [name: "operational_context_member", note: "Partial index. WHERE ended_at IS NULL (representasi diagram tidak memaksakan partial uniqueness)"]
+  }
+}
+
+Table hive.device_operation_challenges {
+  Note: "Owner: Devices. Challenge operasi perangkat sekali pakai (state, context, profiles, login). Dibuat: 022_devices_operational_context.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  id uuid [not null, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  nonce text [not null, note: "Nonce/proof challenge sekali pakai."]
+  device_revision bigint [not null, note: "Versi perangkat yang diikat pada operasi."]
+  operation text [not null, note: "Target proof: state/context.read/context.logout/profiles/context.login."]
+  context_id uuid [note: "ID konteks operasional."]
+  context_revision bigint [note: "Versi sesi/konteks operasional perangkat."]
+  expires_at timestamptz [not null, note: "Waktu kedaluwarsa. DEFAULT SQL: clock_timestamp()+interval '60 seconds'."]
+  outlet_id uuid [note: "ID outlet lokasi."]
+  member_id uuid [note: "ID member tenant yang menjadi subjek."]
+  page_after uuid [note: "Cursor pagination profil."]
+  indexes {
+    (tenant_id, device_id, id) [pk]
+    expires_at [name: "device_operation_expiry"]
+  }
+}
+
+Table hive.device_assignment_receipts {
+  Note: "Owner: Devices. Receipt idempotency perubahan assignment operator. Dibuat: 022_devices_operational_context.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  result jsonb [not null, note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, device_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.operational_device_audit {
+  Note: "Owner: Audit. Audit perubahan assignment dan scoped logout perangkat. Dibuat: 023_device_context_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action IN ('assignments.replace','context.logout')"]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit."]
+  context_id uuid [note: "ID konteks operasional."]
+  outlet_id uuid [note: "ID outlet lokasi."]
+  assignment_count integer [note: "Atribut assignment count pada operational_device_audit."]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+}
+
+Table hive.tenant_receipt_settings {
+  Note: "Owner: Settings. Konfigurasi footer struk tenant dan revision. Dibuat: 026_tenant_receipt_settings.sql."
+  tenant_id uuid [pk, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  receipt_footer text [note: "Teks footer struk tenant (boleh null). CHECK kolom: CHECK receipt_footer IS NULL OR char_length(receipt_footer) BETWEEN 1 AND 160"]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. DEFAULT SQL: 0. CHECK kolom: CHECK revision>=0"]
+}
+
+Table hive.receipt_settings_receipts {
+  Note: "Owner: Settings. Receipt idempotency mutasi setting struk. Dibuat: 026_tenant_receipt_settings.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  result jsonb [note: "Receipt metadata hasil mutasi."]
+  indexes {
+    (tenant_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.receipt_settings_audit {
+  Note: "Owner: Audit. Audit perubahan setting struk tanpa menyimpan teks footer. Dibuat: 027_receipt_settings_audit.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit. CHECK kolom: CHECK revision>0"]
+  field_name text [not null, note: "Nama setting yang berubah. CHECK kolom: CHECK field_name='receipt_footer'"]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, revision) [pk]
+  }
+}
+
+Table hive.device_bootstrap_receipts {
+  Note: "Owner: Devices. Receipt anti-replay bootstrap request ID yang telah diverifikasi. Dibuat: 028_device_challenge_bootstrap_replay.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  request_id uuid [not null, note: "ID request bootstrap untuk mencegah replay."]
+  expires_at timestamptz [not null, note: "TTL anti-replay bootstrap tanpa FK perangkat agar tidak mengunci row."]
+  indexes {
+    (tenant_id, device_id, request_id) [pk]
+    expires_at [name: "device_bootstrap_receipts_expiry"]
+  }
+}
+
+Table hive.tenant_staff_profiles {
+  Note: "Owner: Identity. Profil staf ber-ID netral, dengan label untuk discovery. Dibuat: 030_identity_staff_pin.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  display_name text [not null, note: "Label tampilan yang dapat dibaca manusia. CHECK kolom: CHECK char_length(display_name) BETWEEN 1 AND 80"]
+  indexes {
+    (tenant_id, member_id) [pk]
+  }
+}
+
+Table hive.member_pin_credentials {
+  Note: "Owner: Identity. Verifier PIN Argon2id bersalt, versi pepper dan revision credential. Dibuat: 030_identity_staff_pin.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  revision bigint [not null, note: "Versi PIN; reset harus mencabut konteks versi sebelumnya. CHECK kolom: CHECK revision > 0"]
+  pepper_version integer [note: "Versi secret pepper yang dikelola di luar database."]
+  salt bytea [note: "Salt acak untuk verifier PIN."]
+  verifier bytea [note: "Hasil verifikasi PIN adaptif; bukan PIN plaintext."]
+  membership_revision bigint [not null, note: "Versi lifecycle member yang diikat ke PIN. DEFAULT SQL: 0. CHECK kolom: CHECK membership_revision>=0"]
+  indexes {
+    (tenant_id, member_id) [pk]
+  }
+}
+
+Table hive.member_pin_attempt_state {
+  Note: "Owner: Identity. Counter kegagalan, lockout, dan lease verifikasi PIN lintas replica. Dibuat: 030_identity_staff_pin.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  failures integer [not null, note: "Jumlah kegagalan PIN beruntun. DEFAULT SQL: 0. CHECK kolom: CHECK failures BETWEEN 0 AND 5"]
+  locked_until timestamptz [note: "Batas waktu lockout berdasarkan jam server."]
+  attempt_id uuid [note: "ID percobaan yang dipakai untuk deduplikasi/single-flight."]
+  lease_until timestamptz [note: "Batas masa berlaku lease verifikasi."]
+  indexes {
+    (tenant_id, member_id) [pk]
+  }
+}
+
+Table hive.staff_profile_receipts {
+  Note: "Owner: Identity. Receipt idempotency pembuatan profil staf oleh Owner. Dibuat: 030_identity_staff_pin.sql."
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  request_key text [not null, note: "Kunci idempotency pemanggil."]
+  fingerprint bytea [not null, note: "Fingerprint request idempotency yang dinormalisasi. CHECK kolom: CHECK octet_length(fingerprint)=32"]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  indexes {
+    (tenant_id, actor_id, request_key) [pk]
+  }
+}
+
+Table hive.staff_pin_management_events {
+  Note: "Owner: Audit. Audit pembuatan profil dan set/reset PIN tanpa nilai rahasia. Dibuat: 031_staff_pin_management_audit.sql."
+  id uuid [pk, note: "ID unik entitas ini. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  actor_id uuid [not null, note: "ID pelaku tindakan yang melakukan operasi."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  revision bigint [not null, note: "Versi monoton untuk optimistic concurrency / audit."]
+  action text [not null, note: "Jenis tindakan yang diaudit. CHECK kolom: CHECK action IN ('profile.create','pin.set','pin.reset')"]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+}
+
+Table hive.operator_login_history {
+  Note: "Owner: Audit. Histori login PIN operator online (success/denied/lockout). Dibuat: 033_operator_pin_history.sql."
+  event_id uuid [pk, note: "ID unik event audit/history. DEFAULT SQL: gen_random_uuid()."]
+  tenant_id uuid [not null, note: "ID tenant pemilik data (isolasi multi-tenant)."]
+  attempt_id uuid [not null, note: "ID percobaan yang dipakai untuk deduplikasi/single-flight."]
+  member_id uuid [not null, note: "ID member tenant yang menjadi subjek."]
+  device_id uuid [not null, note: "ID perangkat teraktivasi."]
+  outlet_id uuid [not null, note: "ID outlet lokasi."]
+  outcome text [not null, note: "Hasil login PIN: success/denied/lockout. CHECK kolom: CHECK outcome IN ('success','denied','lockout')"]
+  occurred_at timestamptz [not null, note: "Waktu kejadian menurut server. DEFAULT SQL: clock_timestamp()."]
+  indexes {
+    (tenant_id, attempt_id, outcome) [unique]
+    (tenant_id, occurred_at [desc], event_id [desc]) [name: "operator_history_tenant_time"]
+    (occurred_at, event_id) [name: "operator_history_expiry"]
+  }
+}
+
+Ref: hive.owner_candidates.tenant_id > hive.tenants.id
+Ref: hive.owner_invitations.(tenant_id, owner_id) > hive.owner_candidates.(tenant_id, id)
+Ref: hive.provisioning_receipts.tenant_id > hive.tenants.id
+Ref: hive.provisioning_receipts.(tenant_id, owner_id) > hive.owner_candidates.(tenant_id, id)
+Ref: hive.platform_principals.principal_id > hive.google_principals.id
+Ref: hive.platform_permissions.principal_id > hive.platform_principals.principal_id
+Ref: hive.owner_claims.(tenant_id, owner_id) > hive.owner_candidates.(tenant_id, id)
+Ref: hive.tenant_memberships.tenant_id > hive.tenants.id
+Ref: hive.tenant_memberships.(tenant_id, owner_id) > hive.owner_candidates.(tenant_id, id)
+Ref: hive.platform_sessions.principal_id > hive.platform_principals.principal_id
+Ref: hive.tenant_sessions.(tenant_id, principal_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.provisioning_receipts.actor_id > hive.platform_principals.principal_id
+Ref: hive.provisioning_audit.actor_id > hive.platform_principals.principal_id
+Ref: hive.provisioning_audit.tenant_id > hive.tenants.id
+Ref: hive.provisioning_audit.claim_id > hive.owner_claims.id
+Ref: hive.tenant_rbac_revisions.tenant_id > hive.tenants.id
+Ref: hive.tenant_roles.tenant_id > hive.tenants.id
+Ref: hive.tenant_role_actions.(tenant_id, role_id) > hive.tenant_roles.(tenant_id, id)
+Ref: hive.tenant_role_assignments.(tenant_id, principal_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_role_assignments.(tenant_id, role_id) > hive.tenant_roles.(tenant_id, id)
+Ref: hive.tenant_role_create_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_rbac_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_entitlements.tenant_id > hive.tenants.id
+Ref: hive.tenant_entitlement_history.(tenant_id, capability_id) > hive.tenant_entitlements.(tenant_id, capability_id)
+Ref: hive.tenant_entitlement_receipts.tenant_id > hive.tenants.id
+Ref: hive.tenant_entitlement_receipts.actor_id > hive.platform_principals.principal_id
+Ref: hive.entitlement_audit.tenant_id > hive.tenants.id
+Ref: hive.entitlement_audit.actor_id > hive.platform_principals.principal_id
+Ref: hive.membership_lifecycle_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.membership_lifecycle_receipts.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.membership_lifecycle_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.membership_lifecycle_audit.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.google_principals.id > hive.identity_principals.id
+Ref: hive.locations.tenant_id > hive.tenants.id
+Ref: hive.location_create_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.location_create_audit.(tenant_id, location_id) > hive.locations.(tenant_id, id)
+Ref: hive.location_create_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.session_logout_audit.tenant_id > hive.tenants.id
+Ref: hive.session_logout_audit.actor_id > hive.identity_principals.id
+Ref: hive.session_logout_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_pairings.tenant_id > hive.tenants.id
+Ref: hive.device_pairings.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_pairing_outlets.(tenant_id, pairing_id) > hive.device_pairings.(tenant_id, id) [delete: cascade]
+Ref: hive.device_pairing_outlets.(tenant_id, outlet_id) > hive.locations.(tenant_id, id)
+Ref: hive.devices.tenant_id > hive.tenants.id
+Ref: hive.device_outlets.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.device_outlets.(tenant_id, outlet_id) > hive.locations.(tenant_id, id)
+Ref: hive.device_revoke_receipts.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.device_revoke_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_pairing_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_pairing_audit.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.online_login_history.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_role_location_actions.(tenant_id, role_id) > hive.tenant_roles.(tenant_id, id)
+Ref: hive.tenant_location_role_assignments.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_location_role_assignments.(tenant_id, role_id) > hive.tenant_roles.(tenant_id, id)
+Ref: hive.tenant_location_role_assignments.(tenant_id, location_id) > hive.locations.(tenant_id, id)
+Ref: hive.location_rbac_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_operator_assignments.(tenant_id, device_id, outlet_id) > hive.device_outlets.(tenant_id, device_id, outlet_id)
+Ref: hive.device_operator_assignments.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.operational_contexts.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.operational_contexts.(tenant_id, outlet_id) > hive.locations.(tenant_id, id)
+Ref: hive.operational_contexts.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.device_operation_challenges.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.device_assignment_receipts.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.device_assignment_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.devices.(tenant_id, last_outlet_id) > hive.locations.(tenant_id, id)
+Ref: hive.operational_device_audit.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.operational_device_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_memberships.owner_google_principal_id > hive.google_principals.id
+Ref: hive.tenant_receipt_settings.tenant_id > hive.tenants.id
+Ref: hive.receipt_settings_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.receipt_settings_audit.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.tenant_staff_profiles.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.member_pin_credentials.(tenant_id, member_id) > hive.tenant_staff_profiles.(tenant_id, member_id)
+Ref: hive.member_pin_attempt_state.(tenant_id, member_id) > hive.member_pin_credentials.(tenant_id, member_id)
+Ref: hive.staff_profile_receipts.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.staff_profile_receipts.(tenant_id, member_id) > hive.tenant_staff_profiles.(tenant_id, member_id)
+Ref: hive.staff_pin_management_events.(tenant_id, actor_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.staff_pin_management_events.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.operator_login_history.(tenant_id, member_id) > hive.tenant_memberships.(tenant_id, principal_id)
+Ref: hive.operator_login_history.(tenant_id, device_id) > hive.devices.(tenant_id, id)
+Ref: hive.operator_login_history.(tenant_id, outlet_id) > hive.locations.(tenant_id, id)
+
+TableGroup Audit {
+  hive.provisioning_audit
+  hive.tenant_rbac_audit
+  hive.entitlement_audit
+  hive.membership_lifecycle_audit
+  hive.location_create_audit
+  hive.session_logout_audit
+  hive.device_pairing_audit
+  hive.online_login_history
+  hive.operational_device_audit
+  hive.receipt_settings_audit
+  hive.staff_pin_management_events
+  hive.operator_login_history
+}
+
+TableGroup Devices {
+  hive.device_pairings
+  hive.device_pairing_outlets
+  hive.devices
+  hive.device_outlets
+  hive.device_pairing_limits
+  hive.device_revoke_receipts
+  hive.device_operator_assignments
+  hive.operational_contexts
+  hive.device_operation_challenges
+  hive.device_assignment_receipts
+  hive.device_bootstrap_receipts
+}
+
+TableGroup Identity {
+  hive.google_principals
+  hive.platform_principals
+  hive.platform_permissions
+  hive.owner_claims
+  hive.tenant_memberships
+  hive.platform_sessions
+  hive.tenant_sessions
+  hive.oidc_flows
+  hive.tenant_rbac_revisions
+  hive.tenant_roles
+  hive.tenant_role_actions
+  hive.tenant_role_assignments
+  hive.tenant_role_create_receipts
+  hive.membership_lifecycle_receipts
+  hive.identity_principals
+  hive.tenant_role_location_actions
+  hive.tenant_location_role_assignments
+  hive.location_rbac_receipts
+  hive.tenant_staff_profiles
+  hive.member_pin_credentials
+  hive.member_pin_attempt_state
+  hive.staff_profile_receipts
+}
+
+TableGroup Locations {
+  hive.locations
+  hive.location_create_receipts
+}
+
+TableGroup Platform {
+  hive.tenants
+  hive.owner_candidates
+  hive.owner_invitations
+  hive.provisioning_receipts
+  hive.tenant_entitlements
+  hive.tenant_entitlement_history
+  hive.tenant_entitlement_receipts
+}
+
+TableGroup Settings {
+  hive.tenant_receipt_settings
+  hive.receipt_settings_receipts
+}
+
