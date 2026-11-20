@@ -18,6 +18,7 @@ printf 'PASS: Platform registry depends only on the Go standard library\n'
 go list -f '{{ $p := .ImportPath }}{{range .Imports}}{{printf "%s %s\n" $p .}}{{end}}' ./... |
 awk '
     $2 !~ /^hi-ve\/backend\// { next }
+    $1 == "hi-ve/backend/cmd/audit-retention" && $2 == "hi-ve/backend/internal/audit" { next }
     $1 == "hi-ve/backend/cmd/api" &&
         $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&

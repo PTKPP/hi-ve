@@ -67,6 +67,18 @@ source scripts/audit-retention-checks.sh
 sql hive_test 'CREATE DATABASE hive_retention'
 migrate hive_retention migrations
 audit_retention_checks hive_retention
+go build -o "$scratch/audit-retention" ./cmd/audit-retention
+retention_dsn="postgres://postgres:hive_disposable_test@$port/hive_retention?sslmode=disable&connect_timeout=5"
+retention_status=0
+HIVE_AUDIT_RETENTION_DATABASE_URL="$retention_dsn" "$scratch/audit-retention" || retention_status=$?
+# Dry run by default: the anomalous fixture is refused (exit 3) and nothing is deleted.
+[[ "$retention_status" == 3 ]]
+expect_sql hive_retention "SELECT count(*) FROM hive.provisioning_audit WHERE action='ar.bulk'" 200
+if HIVE_AUDIT_RETENTION_DATABASE_URL= "$scratch/audit-retention" 2>/dev/null; then
+    printf 'Expected the retention job to reject missing configuration\n' >&2
+    exit 1
+fi
+printf 'PASS: retention job defaults to dry run and exits non-zero on refusal\n'
 
 sql hive_test 'CREATE DATABASE hive_upgrade'
 migrate hive_upgrade "$scratch/previous"
