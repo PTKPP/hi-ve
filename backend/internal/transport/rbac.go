@@ -9,6 +9,10 @@ import (
 
 func (a API) rbacRoutes(mux *http.ServeMux) {
 	const base = "/api/v1/app/tenants/{tenant_id}"
+	for _, method := range []string{"GET", "PUT"} {
+		mux.HandleFunc(method+" "+base+"/roles/{role_id}/location-actions", a.origin(a.AppOrigin, a.locationActions))
+		mux.HandleFunc(method+" "+base+"/members/{member_id}/location-role-assignments", a.origin(a.AppOrigin, a.locationAssignments))
+	}
 	mux.HandleFunc("GET "+base+"/roles", a.origin(a.AppOrigin, a.listRoles))
 	mux.HandleFunc("POST "+base+"/roles", a.origin(a.AppOrigin, a.createRole))
 	mux.HandleFunc("PUT "+base+"/roles/{role_id}", a.origin(a.AppOrigin, a.replaceRole))

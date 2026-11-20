@@ -164,5 +164,21 @@ func removeMemberAccess(ctx context.Context, tx pgx.Tx, tenant, actor, member st
 			return nil, 0, err
 		}
 	}
+	scoped, err := loadLocationAssignments(ctx, tx, tenant, member)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(scoped) > 0 {
+		if _, err = tx.Exec(ctx, `DELETE FROM hive.tenant_location_role_assignments WHERE tenant_id=$1 AND member_id=$2`, tenant, member); err != nil {
+			return nil, 0, err
+		}
+		revision, err := advanceRevision(ctx, tx, tenant, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		if err = audit.RecordRBAC(ctx, tx, audit.RBACEvent{Tenant: tenant, Actor: actor, Target: member, Action: "membership.location_roles.replace", Revision: revision, Before: scoped, After: []LocationAssignment{}}); err != nil {
+			return nil, 0, err
+		}
+	}
 	return roles, tag.RowsAffected(), nil
 }

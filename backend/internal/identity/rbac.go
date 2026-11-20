@@ -33,6 +33,7 @@ var (
 type RBAC struct {
 	DB             *pgxpool.Pool
 	FingerprintKey []byte
+	LockOutlets    func(context.Context, pgx.Tx, string, []string) (bool, error)
 }
 
 type Role struct {
