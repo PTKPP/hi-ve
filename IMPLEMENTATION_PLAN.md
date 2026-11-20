@@ -235,6 +235,18 @@ Baseline audit: `feat/phase-02-platform` dan Draft PR #3 pada `9adb2cc88a5c16653
 | OPEN-015 | **NOT VERIFIED.** Browser Web Crypto/IndexedDB, Google OIDC, SMTP dan trusted proxy memerlukan validasi target. Pemeriksaan nama environment dan metadata GitHub belum menemukan konfigurasi HIVE yang dapat diverifikasi. |
 | Quality gates | Gofmt, vet, build, race, architecture guard, actionlint, Node syntax dan suite lengkap PostgreSQL disposable PASS. Fresh/retry, concurrency upgrade, DDL rollback, backfill/FK identity, writer lama dan upgrade 015→019 lulus. Review ini menambah dokumentasi saja. [Checks HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks) |
 
+## Increment 02.16 · Peninjauan keputusan dan status Issue
+
+Baseline `4efabda1f74fb9fdd313a17c74de5234a0824ec0` lulus CI push dan pull request. Judul, deskripsi, dan komentar baru untuk Issue #6, #8, dan #9 memakai bahasa Indonesia dengan identifier teknis asli. Setiap Issue memuat ruang lingkup, status keputusan dan kriteria penerimaan. Riwayat komentar lama dipertahankan. Issue ditutup sebagai `completed` setelah seluruh ruang lingkup yang disetujui terverifikasi, dengan komentar hasil, SHA dan batas cakupan. Keputusan atau acceptance yang tersisa tetap dilacak sebagai OPEN. [CI baseline push](https://github.com/PTKPP/hi-ve/actions/runs/44652953924) · [CI baseline pull request](https://github.com/PTKPP/hi-ve/actions/runs/44652961966)
+
+| Issue | Hasil peninjauan dan syarat penutupan |
+|---|---|
+| #6 · **OPEN** | M1–M4 dan Expand/backfill terverifikasi. M5-C1–C3 masih diusulkan. Siapkan writer kompatibel sebelum memasang `CHECK`, karena `NOT VALID` tetap memeriksa penulisan baru. Validasi pengaman Owner dan uji kedua batas rollback sebelum mengajukan pelepasan FK. [Hasil review](https://github.com/PTKPP/hi-ve/issues/6#issuecomment-7027774357) · [Dokumentasi PostgreSQL](https://www.postgresql.org/docs/18/sql-altertable.html) |
+| #8 · **OPEN** | P1–P5 terverifikasi pada lingkup pairing. LR1–LR4 dan DV2-O1–O5 masih diusulkan. Tambahkan acceptance revalidasi grant setelah lock dan respons logout lama yang tiba setelah login baru. Outlet switch tetap bergantung pada OPEN-013. [Hasil review](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7027774382) |
+| #9 · **OPEN** | S1/S2 terverifikasi. S3-T masih diusulkan dan dapat ditinjau secara independen. PUT diusulkan wajib membawa `receipt_footer` dengan `null` untuk clear, serta 400 untuk field hilang atau teks kosong. Uji replay setelah akses dicabut. S3-G dan S3-A tetap mengikuti keputusan terpisah. [Hasil review](https://github.com/PTKPP/hi-ve/issues/9#issuecomment-7027774440) |
+
+Phase 02 tetap IN PROGRESS. Status Issue melacak cakupannya sendiri. Persetujuan fitur lain, merge dan deployment tetap mengikuti keputusan masing-masing. [Checks HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks)
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -264,3 +276,4 @@ Baseline audit: `feat/phase-02-platform` dan Draft PR #3 pada `9adb2cc88a5c16653
 | 02.13 | Pairing online P1–P5 dan assignment outlet commit `d85bedef2f6e14709284f0cf9953d0aefb3a3ff4`, CI PR dan push PASS. |
 | 02.14 | Owner-only Google App dan S2 online, commit `16fae4ce9efbe8eda218f76cfa6f89695fc33568` di `feat/phase-02-platform`. Gate lokal dan kedua workflow PASS. Checkpoint sesudahnya hanya mengubah tracker. [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44630562774) · [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44630548960) · [Checks HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks) |
 | 02.15 | Proposal DV2 operasional, Identity location scope, M5 Contract, DV3 online dan S3 siap untuk review pada Issue #6/#8/#9. Gate baseline lokal PASS dan Draft PR #3 tetap terbuka. |
+| 02.16 | Issue #6/#8/#9 diperbarui dalam bahasa Indonesia dan tetap OPEN. Review M5, LR, DV2 dan S3-T dicatat. Perubahan hanya pada tracker dan catatan Issue. |
