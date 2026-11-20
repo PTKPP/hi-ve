@@ -39,7 +39,7 @@ func ActivatePrimaryOwner(ctx context.Context, tx pgx.Tx, invitation Invitation,
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO hive.tenant_memberships (tenant_id, principal_id, owner_id, role)
-		VALUES ($1,$2,$3,'primary_owner')`, invitation.Tenant, principal, invitation.Owner)
+	_, err = tx.Exec(ctx, `INSERT INTO hive.tenant_memberships (tenant_id, principal_id, owner_id, role, owner_google_principal_id)
+		VALUES ($1,$2,$3,'primary_owner',$2)`, invitation.Tenant, principal, invitation.Owner)
 	return err
 }

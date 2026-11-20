@@ -169,12 +169,95 @@ sql hive_online_upgrade "WITH principal AS (
 INSERT INTO hive.oidc_flows(state_digest,browser_digest,nonce,verifier,purpose,tenant_id,expires_at)
   SELECT decode(repeat('bc',32),'hex'),decode(repeat('ca',32),'hex'),'nonce','verifier','tenant',tenant_id,statement_timestamp()+interval '10 minutes'
   FROM hive.locations WHERE code='existing'"
-migrate hive_online_upgrade migrations
-expect_sql hive_online_upgrade "$version" "$latest"
+cp migrations/0{18..23}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 23
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google' AND expires_at>statement_timestamp()" 1
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.oidc_flows WHERE event_id IS NOT NULL AND expires_at>statement_timestamp()" 1
 expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.online_login_history' 0
 printf 'PASS: history upgrade from 017 preserves Owner sessions and assigns stable IDs to outstanding flows\n'
+
+# Existing active and inactive Owner rows carry no dedicated Google reference before Expand.
+sql hive_online_upgrade "WITH tenant AS (
+    INSERT INTO hive.tenants(display_name,status) VALUES ('m5 inactive tenant','active') RETURNING id
+), principal AS (
+    INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com','m5-inactive-owner') RETURNING id
+), candidate AS (
+    INSERT INTO hive.owner_candidates(tenant_id,contact_email)
+    SELECT id,'m5-inactive@example.test' FROM tenant RETURNING tenant_id,id
+) INSERT INTO hive.tenant_memberships(tenant_id,principal_id,owner_id,role,active)
+    SELECT tenant_id,principal.id,candidate.id,'primary_owner',false FROM candidate CROSS JOIN principal"
+cp migrations/024_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 24
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_memberships WHERE role='primary_owner' AND owner_google_principal_id IS NULL" 2
+
+seed_google_owner() {
+    local name=$1
+    sql hive_online_upgrade "WITH t AS (
+        INSERT INTO hive.tenants(display_name,status) VALUES ('$name','active') RETURNING id
+    ), p AS (
+        INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com','$name') RETURNING id
+    )
+    INSERT INTO hive.owner_candidates(tenant_id,contact_email) SELECT t.id,'$name@example.test' FROM t,p"
+}
+sql hive_online_upgrade "CREATE ROLE hive_m5_legacy_writer NOLOGIN;
+    GRANT USAGE ON SCHEMA hive TO hive_m5_legacy_writer;
+    GRANT INSERT ON hive.tenant_memberships TO hive_m5_legacy_writer;
+    GRANT SELECT ON hive.owner_candidates,hive.google_principals TO hive_m5_legacy_writer"
+
+legacy_owner_insert() {
+    local name=$1
+    seed_google_owner "$name"
+    sql hive_online_upgrade "SET ROLE hive_m5_legacy_writer;
+        INSERT INTO hive.tenant_memberships(tenant_id,principal_id,owner_id,role)
+        SELECT c.tenant_id,g.id,c.id,'primary_owner' FROM hive.owner_candidates c CROSS JOIN hive.google_principals g
+        WHERE c.contact_email='$name@example.test' AND g.subject='$name';
+        RESET ROLE"
+}
+legacy_owner_insert m5-legacy-expanded
+cp migrations/025_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 25
+legacy_owner_insert m5-legacy-validated
+seed_google_owner m5-current-writer
+sql hive_online_upgrade "SET ROLE hive_m5_legacy_writer;
+    INSERT INTO hive.tenant_memberships(tenant_id,principal_id,owner_id,role,owner_google_principal_id)
+    SELECT c.tenant_id,g.id,c.id,'primary_owner',g.id FROM hive.owner_candidates c CROSS JOIN hive.google_principals g
+    WHERE c.contact_email='m5-current-writer@example.test' AND g.subject='m5-current-writer';
+    RESET ROLE"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_memberships WHERE role='primary_owner' AND owner_google_principal_id=principal_id" 5
+expect_sql hive_online_upgrade "SELECT count(*) FROM pg_constraint WHERE conrelid='hive.tenant_memberships'::regclass AND convalidated
+    AND conname IN ('tenant_memberships_principal_id_fkey','membership_identity_principal_fk','membership_owner_google_shape','membership_owner_google_fk')" 4
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_memberships WHERE role='primary_owner' AND NOT active AND owner_google_principal_id=principal_id" 1
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
+sql hive_online_upgrade "DO \$\$ BEGIN
+    BEGIN
+        UPDATE hive.tenant_memberships SET owner_google_principal_id=gen_random_uuid() WHERE role='primary_owner';
+        RAISE EXCEPTION 'mismatched Owner Google reference was accepted';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+END \$\$"
+# Model both rollback cases on isolated fixture tables. The actual membership FK stays installed.
+sql hive_online_upgrade "BEGIN;
+    CREATE TEMP TABLE m5_google (id uuid PRIMARY KEY);
+    INSERT INTO m5_google SELECT id FROM hive.google_principals;
+    CREATE TEMP TABLE m5_rollback (id uuid PRIMARY KEY);
+    INSERT INTO m5_rollback SELECT principal_id FROM hive.tenant_memberships;
+    ALTER TABLE m5_rollback ADD CONSTRAINT restored_fk FOREIGN KEY (id) REFERENCES m5_google NOT VALID;
+    ALTER TABLE m5_rollback VALIDATE CONSTRAINT restored_fk;
+    ALTER TABLE m5_rollback DROP CONSTRAINT restored_fk;
+    INSERT INTO m5_rollback VALUES (gen_random_uuid());
+    ALTER TABLE m5_rollback ADD CONSTRAINT restored_fk FOREIGN KEY (id) REFERENCES m5_google NOT VALID;
+    DO \$\$ BEGIN
+        BEGIN
+            ALTER TABLE m5_rollback VALIDATE CONSTRAINT restored_fk;
+            RAISE EXCEPTION 'rollback accepted neutral-only fixture';
+        EXCEPTION WHEN foreign_key_violation THEN NULL;
+        END;
+    END \$\$;
+    ROLLBACK"
+printf 'PASS: Owner Google backfill, mixed-version writers, validated constraints and rollback boundaries\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
