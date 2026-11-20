@@ -387,6 +387,17 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | Dependency dan gate | Security/Ops: model role, review `SECURITY DEFINER`, prosedur legal hold, NTP, jendela migrasi indeks, alert, jendela backup (OPEN-015). Legal: D6-8, kecukupan 24 bulan, ketentuan layanan, dasar legal hold. Product: ID keputusan baru untuk D6-9 (kandidat OPEN-017, belum didaftarkan di PRD). Phase 06: D6-4 bersama OPEN-001/013. |
 | Batas tahap ini | Tidak ada purge, migrasi, perubahan PRD, merge atau deploy. Draft PR #3 tetap draft. Phase 02 **IN PROGRESS**. |
 
+## Increment 02.35 · Retensi audit kritis dan scope exit Phase 02
+
+| Gate | Hasil dan kelanjutan |
+|---|---|
+| Keputusan scope · APPROVED | B2 key write S3-G dilacak ke phase consumer pertama. B3 producer biaya/HPP/ekspor/posting S3-A dilacak ke Phase 03–05. B4 outlet switching OPEN-013 dilacak ke Phase 06. B1 retensi audit kritis diimplementasikan di Phase 02 pada PostgreSQL disposable. PRD, CAP/FR/AC dan P0 tidak berubah. [Issue #9](https://github.com/PTKPP/hi-ve/issues/9) |
+| Implementasi · `5f7791a`, `c040357` | Migrasi 036 aditif: indeks `occurred_at` pada 10 tabel audit kritis, kebijakan 24 bulan dengan `enabled=false`, legal hold dan release append-only, ledger purge, trigger append-only (UPDATE/TRUNCATE selalu ditolak, DELETE hanya di dalam fungsi purge) dan fungsi `hive.purge_critical_audit` `SECURITY DEFINER` dengan `search_path` terkunci, tanpa `EXECUTE` publik dan fail-closed. `cmd/audit-retention` adalah job satu kali di luar proses API, default dry run, exit 3 saat ada penolakan. Tidak ada purge nyata dan tidak ada migrasi pada target persisten. Compose development tetap maksimal 028. [Runbook](backend/docs/DEPLOYMENT.md) |
+| Bukti | `scripts/audit-retention-checks.sh` pada PostgreSQL disposable: dry run, apply saat nonaktif ditolak, purge per batch hanya baris kedaluwarsa tanpa hold, hold tenant dan global, hold yang commit konkuren dengan purge dihormati, dua purger tidak tumpang tindih, kegagalan ledger membatalkan delete, jam mundur dan proporsi anomali ditolak, UPDATE/DELETE/TRUNCATE ditolak untuk runtime, retention, role lain dan pemilik tabel, injeksi nama tabel, hijack `search_path`, dan job exit 3 tanpa menghapus. Kedua CI pada `c040357` **PASS**. [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44715908077) · [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44715916045) |
+| Status AC | FR-HV-AUD-002/AC-04 dan FR-HV-AUD-001/AC-05: fondasi **IMPLEMENTED (disposable)**. Aktivasi `enabled=true` di target **NOT VERIFIED** dan menunggu validasi Security/Ops, legal (D6-8) dan OPEN-015. OPEN-006 tetap **OPEN** sampai gate itu selesai. |
+| Dilacak, bukan blocker Phase 02 | S3-G key write dan Phase 07/08. S3-A producer Phase 03–05, ekspor Phase 07, UAT-HV-09 Phase 08. D6-4 dan OPEN-001/013 Phase 06. D6-9 ID keputusan baru. OPEN-007/008, DV4 offline dan OPEN-015 verifikasi target. UAT-HV-03/04/06 penuh Phase 08. |
+| Next action | Final Audit Phase 02 terhadap exit criteria yang telah dibatasi di atas. Draft PR #3 tetap draft sampai Final Audit selesai. Tidak ada merge atau deploy. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -430,3 +441,4 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | 02.32 | Reader Audit access-control dan tes producer grant lokasi selesai pada scope yang disetujui. Gate P0 lintas domain, OPEN-006 dan S3-G tetap terbuka. |
 | 02.33 | Rekomendasi OPEN-006 dan decision matrix D6-1–D6-9 disusun. Implementasi purge NO-GO sampai approval Product Owner + Security/Ops. |
 | 02.34 | Baseline OPEN-006 disetujui kecuali validasi legal D6-8, Phase 06 D6-4 dan OPEN-015 D6-7. Urutan implementasi O6-0–O6-5 diusulkan. Tidak ada purge atau migrasi. OPEN-006 tetap OPEN. |
+| 02.35 | Scope exit Phase 02 dibatasi dan retensi audit kritis diimplementasikan (migrasi 036, job dry run) dengan CI PASS. Aktivasi di target menunggu Security/Ops, legal dan OPEN-015. |
