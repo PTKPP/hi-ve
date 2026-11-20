@@ -377,6 +377,16 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | Decision matrix | D6-1 kelas, D6-2 periode, D6-3 skew, D6-5 privilege/purge, D6-6 legal hold, D6-8 hak hapus **perlu approval**. D6-4 gap offline **NO-GO Phase 02** → Phase 06. D6-7 backup/restore target **NO-GO** sampai OPEN-015. D6-9 retensi transaksi bisnis butuh ID keputusan baru. Implementasi purge **NO-GO** sampai D6-1/2/5/6 approved. Acceptance P1–P8 dan N1–N8 tercatat pada Issue #9. |
 | Next action | Product Owner + Security/Ops memutuskan D6-1–D6-9. Setelah approval: O6-a migrasi aditif (index, ledger, legal hold, trigger, role), O6-b job purge + monitoring, lalu ingest offline Phase 06 dan verifikasi restore target. OPEN-006 tetap **OPEN**, AC-04 tetap **BLOCKED**, Phase 02 **IN PROGRESS**, Draft PR #3 tetap draft. |
 
+## Increment 02.34 · Persetujuan baseline OPEN-006 dan urutan implementasi
+
+| Gate | Hasil dan kelanjutan |
+|---|---|
+| Persetujuan Product Owner | **APPROVED sebagai baseline desain:** D6-1 klasifikasi A/B/C, D6-2 retensi kelas B 24 bulan, D6-3 waktu server dan flag skew, D6-5 privilege/purge fail-closed, D6-6 legal hold, D6-9 retensi transaksi bisnis memerlukan ID keputusan sendiri. **D6-8** disetujui secara prinsip; implementasi dan klaim kepatuhan menunggu validasi legal. **D6-4** tetap Phase 06. **D6-7** tetap mengikuti OPEN-015. [Issue #9](https://github.com/PTKPP/hi-ve/issues/9) |
+| Status OPEN-006 | Tetap **OPEN** karena validasi Security/Ops dan legal belum selesai. PRD.md tidak diubah; penutupan memerlukan approval terpisah. CAP-55–58, FR-HV-AUD-002/AC-01–04, P0 dan scope V1 tidak berubah. AC-04 tetap **BLOCKED**. |
+| Urutan minimal yang aman · PROPOSED | O6-0 validasi Security/Ops dan legal. O6-1 migrasi aditif tanpa purge: indeks, tabel kebijakan, legal hold, ledger, trigger guard, role. O6-2 fungsi purge `SECURITY DEFINER` dengan mode hitung-saja dan flag nonaktif. O6-3 job terpisah dan monitoring. O6-4 pembuktian di PostgreSQL disposable. O6-5 aktivasi di target setelah gate. Rincian hardening dan acceptance ada pada Issue #9. |
+| Dependency dan gate | Security/Ops: model role, review `SECURITY DEFINER`, prosedur legal hold, NTP, jendela migrasi indeks, alert, jendela backup (OPEN-015). Legal: D6-8, kecukupan 24 bulan, ketentuan layanan, dasar legal hold. Product: ID keputusan baru untuk D6-9 (kandidat OPEN-017, belum didaftarkan di PRD). Phase 06: D6-4 bersama OPEN-001/013. |
+| Batas tahap ini | Tidak ada purge, migrasi, perubahan PRD, merge atau deploy. Draft PR #3 tetap draft. Phase 02 **IN PROGRESS**. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -419,3 +429,4 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | 02.31 | S3-G/A disetujui pada arah kontrak. Bukti producer existing dan acceptance P0 tertunda dipetakan pada Issue #9. |
 | 02.32 | Reader Audit access-control dan tes producer grant lokasi selesai pada scope yang disetujui. Gate P0 lintas domain, OPEN-006 dan S3-G tetap terbuka. |
 | 02.33 | Rekomendasi OPEN-006 dan decision matrix D6-1–D6-9 disusun. Implementasi purge NO-GO sampai approval Product Owner + Security/Ops. |
+| 02.34 | Baseline OPEN-006 disetujui kecuali validasi legal D6-8, Phase 06 D6-4 dan OPEN-015 D6-7. Urutan implementasi O6-0–O6-5 diusulkan. Tidak ada purge atau migrasi. OPEN-006 tetap OPEN. |
