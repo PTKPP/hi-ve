@@ -1,6 +1,6 @@
 # PostgreSQL foundation
 
-Phase 01 uses Tern v2.4.3 as a separate migration command. Tern records the version in `public.hive_schema_version` and applies each migration in a PostgreSQL transaction under an advisory lock. Migration 001 is owned by Backend Engineering and creates the shared application namespace `hive`. Each future business table belongs to its owning domain under [Architecture §9.2](ARCHITECTURE.md#92-postgresql--modular-database-architecture--evolutionary-database-design). Backend access roles, tenant SQL and application connection pooling will be reviewed with the first domain slice. [Tern documentation](https://github.com/jackc/tern/blob/v2.4.3/README.markdown)
+Phase 01 uses Tern v2.4.3 as a separate migration command. Tern records the version in `public.hive_schema_version` and applies each migration in a PostgreSQL transaction under an advisory lock. Migration 001 is owned by Backend Engineering and creates the shared application namespace `hive`. Each future business table belongs to its owning domain under [Architecture §9.2](ARCHITECTURE.md#92-postgresql--modular-database-architecture--evolutionary-database-design). Development uses a loopback Compose volume for local state. Production will separate runtime and migration roles on a native PostgreSQL VM. See [deployment topology, role separation and recovery](DEPLOYMENT.md). [Tern documentation](https://github.com/jackc/tern/blob/v2.4.3/README.markdown)
 
 ## Local verification
 

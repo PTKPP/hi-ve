@@ -1,0 +1,22 @@
+name: hi-ve-dev
+
+services:
+  db:
+    image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
+    env_file:
+      - postgres.env
+    environment:
+      POSTGRES_USER: hive_dev
+      POSTGRES_DB: hive_dev
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "hive_dev", "-d", "hive_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  postgres_data:
