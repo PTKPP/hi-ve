@@ -317,6 +317,15 @@ Persetujuan eksplisit mencakup promosi source 029. Pernyataan SQL identik dengan
 
 **Batas.** DV3/onboarding dan login PIN-only tetap menunggu persetujuan. Issue #6 tetap OPEN untuk gate eksekusi target persisten. Phase 02 masih IN PROGRESS dan PR #3 tetap Draft. [Issue #6](https://github.com/PTKPP/hi-ve/issues/6)
 
+## Increment 02.26 · Analisis dan keputusan DV3 PIN-only online
+
+| Gate | Hasil dan kelanjutan |
+|---|---|
+| Head yang ditinjau | `feat/phase-02-platform` pada `7de182788ba5c8db9e1dc8d013c5af345e6b99cb`. Kedua CI **PASS** pada SHA ini. GitHub mencatat PR #3 **Ready for Review** sejak 20 November 2026. Phase 02 masih IN PROGRESS. [PR #3](https://github.com/PTKPP/hi-ve/pull/3) · [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44680566234) · [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44680572919) |
+| DV3-PIN1–PIN4 | **GO untuk review. NO-GO untuk implementasi.** Issue #8 memuat proposal API/DB, ordering lock, replay, audit, matriks CAP → FR/AC → bukti, serta batas antara regresi foundation dan rencana uji DV3. Persetujuan diperlukan untuk scope staf non-Owner, KDF/pepper dan reset pascareactivation, admission dan sesi, serta histori PIN online. [Keputusan dan kriteria penerimaan DV3](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7031716089) |
+| Schema dan kapasitas | M5 029 **PASS sebagai baseline disposable** untuk membership netral. Schema 029 belum menyimpan credential, lease atau histori PIN. Konfirmasi diperlukan untuk migrasi aditif di atas 029. Preflight Compose tetap membatasi 001–028. Probe sintetis lokal Argon2id 19 MiB/t2/p1 menghasilkan p95 57 ms pada dua worker dan empat CPU logis. Kapasitas API, browser, key provisioning, TLS dan trusted proxy pada target belum terverifikasi. |
+| Next action dan dependensi | Setelah persetujuan, mulai dari onboarding/credential dan audit Owner, lalu discovery/admission, kemudian sesi operator dan histori PIN. Gate uji setiap increment memakai PostgreSQL disposable dan CI. OPEN-001/006/007/008/013/015 tetap OPEN pada scope masing-masing. Issue #8 tetap OPEN dan status PR tidak diubah dalam review ini. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -353,3 +362,4 @@ Persetujuan eksplisit mencakup promosi source 029. Pernyataan SQL identik dengan
 | 02.23 | Review M5 Contract menghasilkan NO-GO. Uji terfokus PostgreSQL disposable dan proyeksi constraint lulus. Bukti binary lintas versi, rehearsal DDL dan rollback aplikasi masih diperlukan. Tidak ada migrasi Contract atau perubahan onboarding. |
 | 02.24 | Kandidat M5 029 dan rehearsal native lintas versi lulus di PostgreSQL disposable. Migrasi utama tetap 028. Promosi kandidat menunggu review/persetujuan. |
 | 02.25 | Promosi source 029 disetujui. Preflight Compose menahan schema development pada 028. Rehearsal dan validasi schema 029 hanya pada PostgreSQL disposable. |
+| 02.26 | Kontrak DV3 online dipublikasikan pada Issue #8. NO-GO implementasi sampai DV3-PIN1–PIN4 dan batas schema aditif disetujui. |
