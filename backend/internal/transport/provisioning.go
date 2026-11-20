@@ -63,6 +63,7 @@ func (a API) Handler() http.Handler {
 	a.locationRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
+	a.operationalRoutes(mux)
 	a.loginHistoryRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
@@ -94,7 +95,7 @@ func (a API) origin(want string, next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Origin", want)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, Device-Proof")
 		next(w, r)
 	}
 }

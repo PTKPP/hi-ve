@@ -67,18 +67,20 @@ func run(ctx context.Context) error {
 		return errors.New("database unavailable")
 	}
 	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 21 {
+	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 23 {
 		return errors.New("required backend migrations are missing")
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
 	if err != nil {
 		return errors.New("Google OIDC discovery unavailable")
 	}
+	deviceService := devices.Service{DB: db, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
+		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets,
+		LockOperatorMember: identity.LockOperatorMember, AuthorizeOperator: identity.AuthorizeDeviceOperator}
 	api := transport.API{Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
 		LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
-		Devices: devices.Service{DB: db, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
-			AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets},
-		Locations: locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, FingerprintKey: key}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
+		Devices:      deviceService,
+		Locations:    locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8080"

@@ -41,23 +41,31 @@ type proofClaims struct {
 }
 
 func verifyProof(key PublicKey, compact, pairing, nonce, receipt string, expiry time.Time) bool {
+	payload := signedPayload(key, compact)
+	var claims proofClaims
+	return json.Unmarshal(payload, &claims) == nil &&
+		claims.Purpose == "hive.device.pair.redeem.v1" && claims.PairingID == pairing && claims.Nonce == nonce &&
+		claims.IdempotencyKey == receipt && claims.ExpiresAt.Equal(expiry)
+}
+
+func signedPayload(key PublicKey, compact string) []byte {
 	parts := strings.Split(compact, ".")
 	if len(parts) != 3 || len(compact) > 2048 {
-		return false
+		return nil
 	}
 	// One fixed protected header. There are no optional algorithms, key selectors or JOSE extensions.
 	if parts[0] != "eyJhbGciOiJFUzI1NiJ9" {
-		return false
+		return nil
 	}
 	payload, payloadErr := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	sig, sigErr := base64.RawURLEncoding.Strict().DecodeString(parts[2])
-	var claims proofClaims
-	if payloadErr != nil || sigErr != nil || len(sig) != 64 || json.Unmarshal(payload, &claims) != nil ||
-		claims.Purpose != "hive.device.pair.redeem.v1" || claims.PairingID != pairing || claims.Nonce != nonce ||
-		claims.IdempotencyKey != receipt || !claims.ExpiresAt.Equal(expiry) {
-		return false
+	if payloadErr != nil || sigErr != nil || len(sig) != 64 {
+		return nil
 	}
 	point := key.verificationKey()
 	hash := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	return point != nil && ecdsa.Verify(point, hash[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:]))
+	if point == nil || !ecdsa.Verify(point, hash[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
+		return nil
+	}
+	return payload
 }

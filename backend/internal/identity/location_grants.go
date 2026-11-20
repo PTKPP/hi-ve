@@ -235,3 +235,12 @@ func locationPolicy[T any](ctx context.Context, s RBAC, tenant, token, target, k
 	})
 	return result, err
 }
+
+// LockOperatorMember confirms eligibility without granting any location action.
+func LockOperatorMember(ctx context.Context, tx pgx.Tx, tenant, member string) error {
+	return lockLocationMember(ctx, tx, tenant, member, false)
+}
+
+func AuthorizeDeviceOperator(ctx context.Context, tx pgx.Tx, tenant, member, outlet string) error {
+	return AuthorizeLocationGrant(ctx, tx, tenant, member, outlet, DeviceOperatorUse)
+}

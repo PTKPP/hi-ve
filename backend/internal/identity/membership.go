@@ -14,8 +14,9 @@ import (
 )
 
 type MembershipLifecycle struct {
-	DB             *pgxpool.Pool
-	FingerprintKey []byte
+	DB                   *pgxpool.Pool
+	FingerprintKey       []byte
+	RemoveOperatorAccess func(context.Context, pgx.Tx, string, string) error
 }
 
 type MembershipChange struct {
@@ -110,6 +111,11 @@ func (s MembershipLifecycle) Transition(ctx context.Context, tenant, member, tok
 		var revokedSessions int64
 		revokedRoles := []string{}
 		if !enable {
+			if s.RemoveOperatorAccess != nil {
+				if err = s.RemoveOperatorAccess(ctx, tx, tenant, member); err != nil {
+					return err
+				}
+			}
 			revokedRoles, revokedSessions, err = removeMemberAccess(ctx, tx, tenant, actor, member)
 			if err != nil {
 				return err

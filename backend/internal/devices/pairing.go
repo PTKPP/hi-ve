@@ -32,12 +32,14 @@ var (
 )
 
 type Service struct {
-	DB              *pgxpool.Pool
-	CodeKey         []byte
-	PreviousCodeKey []byte
-	RateKey         []byte
-	AuthorizeOwner  func(context.Context, pgx.Tx, string, string) (string, error)
-	LockOutlets     func(context.Context, pgx.Tx, string, []string) (bool, error)
+	DB                 *pgxpool.Pool
+	CodeKey            []byte
+	PreviousCodeKey    []byte
+	RateKey            []byte
+	AuthorizeOwner     func(context.Context, pgx.Tx, string, string) (string, error)
+	LockOperatorMember func(context.Context, pgx.Tx, string, string) error
+	AuthorizeOperator  func(context.Context, pgx.Tx, string, string, string) error
+	LockOutlets        func(context.Context, pgx.Tx, string, []string) (bool, error)
 }
 
 type Challenge struct {
@@ -418,6 +420,10 @@ func (s Service) Revoke(ctx context.Context, tenant, token, device, key string, 
 		if err != nil {
 			return err
 		}
+		if _, err = tx.Exec(ctx, `UPDATE hive.operational_contexts SET ended_at=clock_timestamp()
+			WHERE tenant_id=$1 AND device_id=$2 AND ended_at IS NULL`, tenant, device); err != nil {
+			return err
+		}
 		return audit.RecordDevicePairing(ctx, tx, "revoked", tenant, actor, pairing, device)
 	})
 	return result, err
@@ -436,5 +442,13 @@ func (s Service) Cleanup(ctx context.Context) error {
 		ORDER BY updated_at LIMIT 500 FOR UPDATE SKIP LOCKED
 	) DELETE FROM hive.device_pairing_limits l USING expired e
 	WHERE (l.scope,l.subject)=(e.scope,e.subject)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(ctx, `WITH expired AS (
+		SELECT tenant_id,device_id,id FROM hive.device_operation_challenges WHERE expires_at<=statement_timestamp()
+		ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED
+	) DELETE FROM hive.device_operation_challenges c USING expired e
+	WHERE (c.tenant_id,c.device_id,c.id)=(e.tenant_id,e.device_id,e.id)`)
 	return err
 }
