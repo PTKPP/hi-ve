@@ -239,14 +239,7 @@ func (s Service) admitPIN(ctx context.Context, claims operationClaims, peer neti
 		if err = consumePINProof(ctx, tx, claims); err != nil {
 			return err
 		}
-		if err = takeStartLimit(ctx, tx, "pin_peer", keyed(s.RateKey, "pin-peer", peer.Unmap().WithZone("").String()), "1 minute", 120); err != nil {
-			if errors.Is(err, ErrLimited) {
-				declined = err
-				return nil
-			}
-			return err
-		}
-		if err = takeStartLimit(ctx, tx, "pin_device", keyed(s.RateKey, "pin-device", claims.Tenant+claims.Device), "1 minute", 30); err != nil {
+		if err = s.chargePINLimits(ctx, tx, claims, peer); err != nil {
 			if errors.Is(err, ErrLimited) {
 				declined = err
 				return nil
@@ -282,6 +275,25 @@ func (s Service) admitPIN(ctx context.Context, claims operationClaims, peer neti
 		release = nil
 	}
 	return snapshot, release, err
+}
+
+// Check both buckets before charging either. An exhausted device must
+// not spend another installation's direct-peer capacity.
+func (s Service) chargePINLimits(ctx context.Context, tx pgx.Tx, c operationClaims, peer netip.Addr) error {
+	device := keyed(s.RateKey, "pin-device", c.Tenant+c.Device)
+	address := keyed(s.RateKey, "pin-peer", peer.Unmap().WithZone("").String())
+	deviceRecent, err := lockLimit(ctx, tx, "pin_device", device, "1 minute", 30)
+	if err != nil {
+		return err
+	}
+	peerRecent, err := lockLimit(ctx, tx, "pin_peer", address, "1 minute", 120)
+	if err != nil {
+		return err
+	}
+	if err := consumeLimit(ctx, tx, "pin_device", device, deviceRecent); err != nil {
+		return err
+	}
+	return consumeLimit(ctx, tx, "pin_peer", address, peerRecent)
 }
 
 func recordPINDenial(ctx context.Context, tx pgx.Tx, c operationClaims, locked bool) {

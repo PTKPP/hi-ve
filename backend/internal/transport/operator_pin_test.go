@@ -194,6 +194,15 @@ func TestOperatorPINPostgres(t *testing.T) {
 	for i := initial; i < 5; i++ {
 		login(device, outlet, member, "000000", 0, 401)
 	}
+	// Saturating the device bucket must not debit the shared peer bucket.
+	peerCount := `SELECT sum(cardinality(attempts))::text FROM hive.device_pairing_limits WHERE scope='pin_peer'`
+	beforePeer := id(peerCount)
+	exec(`UPDATE hive.device_pairing_limits SET attempts=array_fill(clock_timestamp(),ARRAY[30]) WHERE scope='pin_device'`)
+	login(otherDevice, outlet, member, "012345", 0, 429)
+	if afterPeer := id(peerCount); afterPeer != beforePeer {
+		t.Fatal("exhausted device debited shared peer budget")
+	}
+	exec(`UPDATE hive.device_pairing_limits SET attempts='{}' WHERE scope='pin_device'`)
 	until := id("SELECT locked_until::text FROM hive.member_pin_attempt_state WHERE tenant_id=$1 AND member_id=$2", tenant, member)
 	login(otherDevice, outlet, member, "012345", 0, 401)
 	if now := id("SELECT locked_until::text FROM hive.member_pin_attempt_state WHERE tenant_id=$1 AND member_id=$2", tenant, member); now != until {
