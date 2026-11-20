@@ -1,7 +1,11 @@
 package transport
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,6 +38,11 @@ func (a API) catalogRoutes(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /api/v1/operator/tenants/{tenant_id}/devices/{device_id}/catalog/skus/{id}/price", a.origin(a.AppOrigin, a.operatorPrice))
+	if a.Devices.CatalogCommands {
+		for _, kind := range []string{"products", "skus"} {
+			mux.HandleFunc("PUT /api/v1/operator/tenants/{tenant_id}/devices/{device_id}/catalog/"+kind+"/{id}", a.origin(a.AppOrigin, a.staffCatalogWrite(kind)))
+		}
+	}
 	const root = "/api/v1/app/tenants/{tenant_id}/catalog/"
 	mux.HandleFunc("GET "+root+"products", a.origin(a.AppOrigin, a.catalogList))
 	mux.HandleFunc("GET "+root+"products/{product}/skus", a.origin(a.AppOrigin, a.catalogList))
@@ -175,4 +184,70 @@ func (a API) catalogList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string][]catalog.Product{"products": rows})
+}
+
+// commandDigest binds the signed device command to the method, escaped path, receipt key and exact body.
+func commandDigest(method, path, key string, body []byte) string {
+	hash := sha256.New()
+	io.WriteString(hash, method+"\n"+path+"\n"+key+"\n")
+	hash.Write(body)
+	return hex.EncodeToString(hash.Sum(nil))
+}
+func (a API) staffCatalogWrite(kind string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tenant, device, id, key := r.PathValue("tenant_id"), r.PathValue("device_id"), r.PathValue("id"), r.Header.Get("Idempotency-Key")
+		if !uuid.MatchString(tenant) || !uuid.MatchString(device) || !uuid.MatchString(id) || !keyPattern.MatchString(key) || r.URL.RawQuery != "" {
+			catalogError(w, catalog.ErrInput)
+			return
+		}
+		proof := r.Header.Get("Device-Proof")
+		if len(proof) == 0 || len(proof) > 2048 {
+			deviceError(w, devices.ErrProof)
+			return
+		}
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8192))
+		if err != nil {
+			catalogError(w, catalog.ErrInput)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		var product catalog.ProductInput
+		var sku catalog.SKUInput
+		if kind == "products" {
+			if !decode(w, r, &product) {
+				return
+			}
+		} else {
+			if !decode(w, r, &sku) {
+				return
+			}
+			if !uuid.MatchString(sku.Product) {
+				catalogError(w, catalog.ErrInput)
+				return
+			}
+		}
+		digest := commandDigest(r.Method, r.URL.EscapedPath(), key, raw)
+		var rev int64
+		err = a.Devices.CatalogCommand(r.Context(), tenant, device, proof, cookie(r, operatorCookie), digest, func(tx pgx.Tx, current devices.OperationalContext) error {
+			if err := identity.AuthorizeCatalogManagement(r.Context(), tx, tenant, current.Member); err != nil {
+				return err
+			}
+			var err error
+			if kind == "products" {
+				rev, err = a.Catalog.PutProductTx(r.Context(), tx, tenant, current.Member, key, id, product)
+			} else {
+				rev, err = a.Catalog.PutSKUTx(r.Context(), tx, tenant, current.Member, key, id, sku)
+			}
+			return err
+		})
+		if errors.Is(err, devices.ErrProof) {
+			deviceError(w, err)
+			return
+		}
+		if err != nil {
+			catalogError(w, err)
+			return
+		}
+		respond(w, 200, map[string]int64{"revision": rev})
+	}
 }

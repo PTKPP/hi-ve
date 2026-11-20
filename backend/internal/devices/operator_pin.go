@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/netip"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,7 +20,15 @@ import (
 	"hi-ve/backend/internal/identity"
 )
 
+var commandHash = regexp.MustCompile("^[a-f0-9]{64}$")
+
 func validOperationTarget(target OperationTarget, pin bool) bool {
+	if target.Operation == "catalog.products.write" {
+		return pin && commandHash.MatchString(target.CommandDigest) && outletID.MatchString(target.ContextID) && target.Revision != nil && *target.Revision > 0 && target.Outlet == "" && target.Member == "" && target.After == ""
+	}
+	if target.CommandDigest != "" {
+		return false
+	}
 	switch target.Operation {
 	case "profiles":
 		return pin && target.ContextID == "" && target.Revision == nil && outletID.MatchString(target.Outlet) &&
@@ -73,7 +82,7 @@ func decodePINProof(payload []byte, dst any) bool {
 }
 
 func sameOperation(a, b OperationTarget) bool {
-	return a.Operation == b.Operation && a.ContextID == b.ContextID && a.Outlet == b.Outlet &&
+	return a.CommandDigest == b.CommandDigest && a.Operation == b.Operation && a.ContextID == b.ContextID && a.Outlet == b.Outlet &&
 		a.Member == b.Member && a.After == b.After && sameRevision(a.Revision, b.Revision)
 }
 

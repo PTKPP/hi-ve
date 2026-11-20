@@ -90,6 +90,10 @@ func TestCatalogPostgres(t *testing.T) {
 	foreignOutlet := makeLocation(foreign, "north", "outlet")
 	amount := func(rev int, n string) map[string]any { return map[string]any{"amount": n, "revision": rev} }
 	prices := skus + sku
+	liveCatalog := cat
+	liveCatalog.CheckCapability = ent.CheckWrite
+	liveApp := API{Catalog: liveCatalog, AppOrigin: appOrigin}.Handler()
+	expectStatus(t, accessRequest(liveApp, "PUT", prices+"/price", appOrigin, "price-without-entitlement", amount(0, "100"), owner), 403)
 	expectStatus(t, put(prices+"/price", "decimal", amount(0, "1e3"), owner), 400)
 	expectStatus(t, put(prices+"/price", "base", amount(0, "9900.0001"), owner), 200)
 	for _, bad := range []string{warehouse, foreignOutlet} {

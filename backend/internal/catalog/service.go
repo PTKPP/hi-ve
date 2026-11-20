@@ -47,56 +47,68 @@ func label(s string) bool {
 	return strings.TrimSpace(s) == s && len(s) > 0 && len(s) <= 128 && !strings.ContainsFunc(s, unicode.IsControl)
 }
 
-// write authorizes retries as well as first attempts. The receipt and mutation commit together.
-func (s Service) write(ctx context.Context, tenant, token, key, capability, operation, id string, body any, fn func(pgx.Tx, string) (int64, error)) (int64, error) {
+func (s Service) withOwner(ctx context.Context, tenant, token string, apply func(pgx.Tx, string) (int64, error)) (int64, error) {
+	var revision int64
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		actor, err := s.AuthorizeOwner(ctx, tx, tenant, token)
+		if err != nil {
+			return err
+		}
+		revision, err = apply(tx, actor)
+		return err
+	})
+	return revision, err
+}
+
+// write records a mutation in the same transaction as the caller's live authorization.
+func (s Service) write(ctx context.Context, tx pgx.Tx, tenant, actor, key, capability, operation, id string, body any, fn func(pgx.Tx, string) (int64, error)) (int64, error) {
 	payload, err := json.Marshal([]any{operation, id, body})
 	if err != nil {
 		return 0, err
 	}
 	digest := sha256.Sum256(payload)
-	var revision int64
-	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		actor, err := s.AuthorizeOwner(ctx, tx, tenant, token)
-		if err != nil {
-			return err
-		}
-		if err = s.CheckCapability(ctx, tx, tenant, capability); err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `INSERT INTO hive.catalog_write_receipts(tenant_id,actor_id,request_key,fingerprint) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, tenant, actor, key, digest[:])
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			var previous []byte
-			err = tx.QueryRow(ctx, `SELECT fingerprint, revision FROM hive.catalog_write_receipts WHERE tenant_id=$1 AND actor_id=$2 AND request_key=$3`, tenant, actor, key).Scan(&previous, &revision)
-			if err == nil && !bytes.Equal(previous, digest[:]) {
-				return ErrConflict
-			}
-			return err
-		}
-		revision, err = fn(tx, actor)
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE hive.catalog_write_receipts SET revision=$4 WHERE tenant_id=$1 AND actor_id=$2 AND request_key=$3`, tenant, actor, key, revision)
-		return err
-	})
-	var pgerr *pgconn.PgError
-	if errors.Is(err, pgx.ErrNoRows) || errors.As(err, &pgerr) && (pgerr.Code == "23505" || pgerr.Code == "23503") {
-		return 0, ErrConflict
+	if err = s.CheckCapability(ctx, tx, tenant, capability); err != nil {
+		return 0, err
 	}
-	if errors.As(err, &pgerr) && pgerr.Code == "22P02" {
-		return 0, ErrInput
+	tag, err := tx.Exec(ctx, `INSERT INTO hive.catalog_write_receipts(tenant_id,actor_id,request_key,fingerprint) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, tenant, actor, key, digest[:])
+	if err != nil {
+		return 0, err
 	}
+	if tag.RowsAffected() == 0 {
+		var previous []byte
+		var revision int64
+		err = tx.QueryRow(ctx, `SELECT fingerprint, revision FROM hive.catalog_write_receipts WHERE tenant_id=$1 AND actor_id=$2 AND request_key=$3`, tenant, actor, key).Scan(&previous, &revision)
+		if err == nil && !bytes.Equal(previous, digest[:]) {
+			return 0, ErrConflict
+		}
+		return revision, err
+	}
+	revision, err := fn(tx, actor)
+	if err != nil {
+		var pgerr *pgconn.PgError
+		if errors.Is(err, pgx.ErrNoRows) || errors.As(err, &pgerr) && (pgerr.Code == "23505" || pgerr.Code == "23503") {
+			return 0, ErrConflict
+		}
+		if errors.As(err, &pgerr) && pgerr.Code == "22P02" {
+			return 0, ErrInput
+		}
+		return 0, err
+	}
+	_, err = tx.Exec(ctx, `UPDATE hive.catalog_write_receipts SET revision=$4 WHERE tenant_id=$1 AND actor_id=$2 AND request_key=$3`, tenant, actor, key, revision)
 	return revision, err
 }
 
 func (s Service) PutProduct(ctx context.Context, tenant, token, key, id string, in ProductInput) (int64, error) {
+	return s.withOwner(ctx, tenant, token, func(tx pgx.Tx, actor string) (int64, error) {
+		return s.PutProductTx(ctx, tx, tenant, actor, key, id, in)
+	})
+}
+
+func (s Service) PutProductTx(ctx context.Context, tx pgx.Tx, tenant, actor, key, id string, in ProductInput) (int64, error) {
 	if in.Revision == nil || *in.Revision < 0 || !label(in.Name) || !label(in.Category) {
 		return 0, ErrInput
 	}
-	return s.write(ctx, tenant, token, key, "catalog.products", "product", id, in, func(tx pgx.Tx, _ string) (int64, error) {
+	return s.write(ctx, tx, tenant, actor, key, "catalog.products", "product", id, in, func(tx pgx.Tx, _ string) (int64, error) {
 		var rev int64
 		if *in.Revision == 0 {
 			err := tx.QueryRow(ctx, `INSERT INTO hive.catalog_products(tenant_id,id,name,category,revision) VALUES($1,$2,$3,$4,1) RETURNING revision`, tenant, id, in.Name, in.Category).Scan(&rev)
@@ -108,10 +120,14 @@ func (s Service) PutProduct(ctx context.Context, tenant, token, key, id string, 
 }
 
 func (s Service) PutSKU(ctx context.Context, tenant, token, key, id string, in SKUInput) (int64, error) {
+	return s.withOwner(ctx, tenant, token, func(tx pgx.Tx, actor string) (int64, error) { return s.PutSKUTx(ctx, tx, tenant, actor, key, id, in) })
+}
+
+func (s Service) PutSKUTx(ctx context.Context, tx pgx.Tx, tenant, actor, key, id string, in SKUInput) (int64, error) {
 	if in.Revision == nil || *in.Revision < 0 || !codePattern.MatchString(in.Code) || !label(in.Variant) || in.Barcode != nil && !label(*in.Barcode) || in.Active == nil || in.BatchTracked == nil {
 		return 0, ErrInput
 	}
-	return s.write(ctx, tenant, token, key, "catalog.products", "sku", id, in, func(tx pgx.Tx, _ string) (int64, error) {
+	return s.write(ctx, tx, tenant, actor, key, "catalog.products", "sku", id, in, func(tx pgx.Tx, _ string) (int64, error) {
 		var rev int64
 		if *in.Revision == 0 {
 			err := tx.QueryRow(ctx, `INSERT INTO hive.catalog_skus(tenant_id,id,product_id,code,variant,barcode,unit,active,batch_tracked,revision)

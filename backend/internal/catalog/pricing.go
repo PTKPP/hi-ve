@@ -31,10 +31,16 @@ func (s Service) lockOutlet(ctx context.Context, tx pgx.Tx, tenant, outlet strin
 }
 
 func (s Service) PutPrice(ctx context.Context, tenant, token, key, sku, outlet string, in PriceInput) (int64, error) {
+	return s.withOwner(ctx, tenant, token, func(tx pgx.Tx, actor string) (int64, error) {
+		return s.putPriceTx(ctx, tx, tenant, actor, key, sku, outlet, in)
+	})
+}
+
+func (s Service) putPriceTx(ctx context.Context, tx pgx.Tx, tenant, actor, key, sku, outlet string, in PriceInput) (int64, error) {
 	if in.Revision == nil || *in.Revision < 0 || len(in.Amount) > 128 || !decimal.MatchString(in.Amount) {
 		return 0, ErrInput
 	}
-	return s.write(ctx, tenant, token, key, "catalog.pricing", "price/"+outlet, sku, in, func(tx pgx.Tx, actor string) (int64, error) {
+	return s.write(ctx, tx, tenant, actor, key, "catalog.pricing", "price/"+outlet, sku, in, func(tx pgx.Tx, actor string) (int64, error) {
 		if outlet != "" {
 			if err := s.lockOutlet(ctx, tx, tenant, outlet); err != nil {
 				return 0, err

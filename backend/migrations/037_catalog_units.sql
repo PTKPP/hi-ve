@@ -9,7 +9,13 @@ BEGIN
     END IF;
     IF source_unit = target_unit THEN RETURN quantity; END IF;
     IF (source_unit, target_unit) IN (('kg', 'g'), ('L', 'mL')) THEN RETURN quantity * 1000; END IF;
-    IF (source_unit, target_unit) IN (('g', 'kg'), ('mL', 'L')) THEN RETURN quantity * 0.001; END IF;
+    IF (source_unit, target_unit) IN (('g', 'kg'), ('mL', 'L')) THEN
+        -- PostgreSQL numeric permits at most 16383 fractional digits.
+        IF scale(trim_scale(quantity)) > 16380 THEN
+            RAISE EXCEPTION 'converted quantity exceeds numeric scale' USING ERRCODE = '22003';
+        END IF;
+        RETURN quantity * 0.001;
+    END IF;
     RAISE EXCEPTION 'incompatible quantity dimensions' USING ERRCODE = '22023';
 END
 $$;

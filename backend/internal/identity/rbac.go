@@ -31,10 +31,11 @@ var (
 )
 
 type RBAC struct {
-	CatalogPrices  bool
-	DB             *pgxpool.Pool
-	FingerprintKey []byte
-	LockOutlets    func(context.Context, pgx.Tx, string, []string) (bool, error)
+	CatalogProducts bool
+	CatalogPrices   bool
+	DB              *pgxpool.Pool
+	FingerprintKey  []byte
+	LockOutlets     func(context.Context, pgx.Tx, string, []string) (bool, error)
 }
 
 type Role struct {
@@ -77,11 +78,16 @@ type ReplaceAssignments struct {
 	Revision *int64   `json:"revision"`
 }
 
-func validateRole(name string, actions []string) (string, error) {
+func (s RBAC) validateRole(name string, actions []string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || len(name) > 128 || strings.ContainsFunc(name, unicode.IsControl) ||
-		actions == nil || len(actions) > 1 || (len(actions) == 1 && actions[0] != rolesRead) {
+		actions == nil || len(actions) > 2 {
 		return "", ErrRBACInput
+	}
+	for i, action := range actions {
+		if action != rolesRead && !(s.CatalogProducts && action == CatalogProductsManage) || i > 0 && actions[0] == action {
+			return "", ErrRBACInput
+		}
 	}
 	return name, nil
 }
@@ -197,7 +203,7 @@ func putActions(ctx context.Context, tx pgx.Tx, tenant, role string, actions []s
 }
 
 func (s RBAC) Create(ctx context.Context, tenant, token, key string, input CreateRole) (RoleResult, error) {
-	name, err := validateRole(input.Name, input.Actions)
+	name, err := s.validateRole(input.Name, input.Actions)
 	if err != nil || !roleKeyPattern.MatchString(input.Key) || input.Key == "primary_owner" || input.Key == "primary-owner" {
 		return RoleResult{}, ErrRBACInput
 	}
@@ -260,7 +266,7 @@ func (s RBAC) Create(ctx context.Context, tenant, token, key string, input Creat
 }
 
 func (s RBAC) Replace(ctx context.Context, tenant, token, id string, input ReplaceRole) (RoleResult, error) {
-	name, err := validateRole(input.Name, input.Actions)
+	name, err := s.validateRole(input.Name, input.Actions)
 	if err != nil || input.Revision == nil || *input.Revision < 0 {
 		return RoleResult{}, ErrRBACInput
 	}
@@ -353,4 +359,19 @@ func (s RBAC) Assign(ctx context.Context, tenant, token, member string, input Re
 			Revision: result.Revision, Before: before, After: ids})
 	})
 	return result, err
+}
+
+const CatalogProductsManage = "catalog.products.manage"
+
+// The Devices caller has already locked the live membership. Assignment deletion
+// and role replacement must order against this permission until the command commits.
+func AuthorizeCatalogManagement(ctx context.Context, tx pgx.Tx, tenant, member string) error {
+	var id string
+	err := tx.QueryRow(ctx, `SELECT r.id FROM hive.tenant_role_assignments a JOIN hive.tenant_roles r ON (r.tenant_id,r.id)=(a.tenant_id,a.role_id)
+        JOIN hive.tenant_role_actions p ON (p.tenant_id,p.role_id)=(a.tenant_id,a.role_id)
+        WHERE a.tenant_id=$1 AND a.principal_id=$2 AND p.action=$3 ORDER BY r.id LIMIT 1 FOR SHARE OF a,r,p`, tenant, member, CatalogProductsManage).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrForbidden
+	}
+	return err
 }

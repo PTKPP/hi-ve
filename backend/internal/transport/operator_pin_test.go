@@ -22,6 +22,7 @@ import (
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
+	"hi-ve/backend/internal/platform/entitlements"
 )
 
 func TestOperatorPINPostgres(t *testing.T) {
@@ -62,7 +63,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	role := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'operator','Operator') RETURNING id`, tenant)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
-	svc := devices.Service{DB: db, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
+	svc := devices.Service{DB: db, CatalogCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
 		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true}
 	newPIN := func() *identity.PIN {
 		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
@@ -73,7 +74,12 @@ func TestOperatorPINPostgres(t *testing.T) {
 	}
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
-	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, CheckCapability: func(context.Context, pgx.Tx, string, string) error { return nil }}
+	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, CheckCapability: func(ctx context.Context, tx pgx.Tx, tenant, capability string) error {
+		if capability == "catalog.pricing" {
+			return nil
+		}
+		return (entitlements.Service{DB: db}).CheckWrite(ctx, tx, tenant, capability)
+	}}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
@@ -104,6 +110,9 @@ func TestOperatorPINPostgres(t *testing.T) {
 		req := httptest.NewRequest(method, path, bytes.NewReader(data))
 		req.Header.Set("Origin", appOrigin)
 		req.Header.Set("Device-Proof", proof)
+		if method == "PUT" {
+			req.Header.Set("Idempotency-Key", "staff-catalog-command-01")
+		}
 		if session != nil {
 			req.AddCookie(session)
 		}
@@ -267,6 +276,27 @@ func TestOperatorPINPostgres(t *testing.T) {
 	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='catalog.pricing.read'`, tenant, role)
 	expectStatus(t, readPrice(pricePath), 403)
 
+	// Management requires a tenant role as well as the live operational context.
+	staffPath := base(device) + "/catalog/products/" + id("SELECT gen_random_uuid()")
+	body := map[string]any{"revision": 0, "name": "Madu staf", "category": "Pangan"}
+	raw, _ := json.Marshal(body)
+	digest := commandDigest("PUT", staffPath, "staff-catalog-command-01", raw)
+	command := func() string {
+		return challenge(device, devices.OperationTarget{Operation: "catalog.products.write", ContextID: previous.ID, Revision: &previous.Revision, CommandDigest: digest})
+	}
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+	exec(`INSERT INTO hive.tenant_role_actions VALUES($1,$2,'catalog.products.manage')`, tenant, role)
+	exec(`INSERT INTO hive.tenant_role_assignments VALUES($1,$2,$3)`, tenant, member, role)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+	exec(`INSERT INTO hive.tenant_entitlements VALUES($1,'catalog.products',now(),now()+interval '1 day','fixture',NULL,1)`, tenant)
+	signed := command()
+	expectStatus(t, send(handler, "PUT", staffPath, signed, map[string]any{"revision": 0, "name": "Lain", "category": "Pangan"}, cookies[0]), 401)
+	expectStatus(t, send(handler, "PUT", staffPath, signed, body, cookies[0]), 200)
+	expectStatus(t, send(handler, "PUT", staffPath, signed, body, cookies[0]), 401)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 200)
+	exec(`DELETE FROM hive.tenant_role_assignments WHERE tenant_id=$1 AND principal_id=$2 AND role_id=$3`, tenant, member, role)
+	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)
 	rev := previous.Revision
@@ -331,6 +361,23 @@ func TestOperatorPINPostgres(t *testing.T) {
 		t.Fatal("deactivation and issuance left a live context")
 	}
 
+	// A restored outlet must require a fresh login even when the PIN and role are unchanged.
+	freshMember := makeMember("pin-outlet-lifecycle", "456789")
+	deviceRevision := int64(2)
+	fresh := login(device, outlet, freshMember, "456789", deviceRevision, 201)
+	var active devices.OperationalContext
+	if err := json.Unmarshal(fresh.Body.Bytes(), &active); err != nil {
+		t.Fatal(err)
+	}
+	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: svc.EndOutletContexts}
+	for revision, status := range []string{"inactive", "active"} {
+		rev := int64(revision)
+		if _, err := loc.SetStatus(ctx, tenant, owner.Value, outlet, "location-state-"+status, locations.StatusInput{Status: status, Revision: &rev}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	afterRestore := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: active.ID, Revision: &active.Revision})
+	expectStatus(t, send(handler, "GET", base(device)+"/context", afterRestore, nil, fresh.Result().Cookies()[0]), 401)
 	exec(`UPDATE hive.operator_login_history SET occurred_at=statement_timestamp()-interval '168 hours' WHERE tenant_id=$1`, tenant)
 	expired := accessRequest(handler, "GET", "/api/v1/app/tenants/"+tenant+"/operator-login-history", appOrigin, "", nil, owner)
 	expectStatus(t, expired, 200)

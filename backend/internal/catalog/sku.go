@@ -32,7 +32,8 @@ func readSKU(ctx context.Context, tx pgx.Tx, tenant, id string, activeOnly bool)
 	var row SKU
 	err := tx.QueryRow(ctx, `SELECT s.id,s.product_id,s.code,s.variant,s.barcode,s.unit,s.active,s.batch_tracked,s.revision,p.name,p.category,p.revision
         FROM hive.catalog_skus s JOIN hive.catalog_products p ON (p.tenant_id,p.id)=(s.tenant_id,s.product_id)
-        WHERE s.tenant_id=$1 AND s.id=$2 AND (NOT $3 OR s.active) FOR SHARE OF s,p`, tenant, id, activeOnly).
+        JOIN hive.active_tenants t ON t.id=s.tenant_id
+        WHERE s.tenant_id=$1 AND s.id=$2 AND (NOT $3 OR s.active) FOR SHARE OF s,p,t`, tenant, id, activeOnly).
 		Scan(&row.ID, &row.Product, &row.Code, &row.Variant, &row.Barcode, &row.Unit, &row.Active, &row.BatchTracked, &row.Revision, &row.Name, &row.Category, &row.ProductRevision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SKU{}, ErrUnavailable

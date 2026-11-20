@@ -69,6 +69,11 @@ sql hive_test "DO \$\$ DECLARE
     src hive.catalog_unit; dst hive.catalog_unit; converted numeric;
     quantity constant numeric := 9007199254740993.000000000000000000001;
 BEGIN
+    BEGIN
+        PERFORM hive.catalog_quantity('1e-16383'::numeric,'g','kg');
+        RAISE EXCEPTION 'conversion silently rounded to zero';
+    EXCEPTION WHEN numeric_value_out_of_range THEN NULL;
+    END;
     FOREACH src IN ARRAY enum_range(NULL::hive.catalog_unit) LOOP
         FOREACH dst IN ARRAY enum_range(NULL::hive.catalog_unit) LOOP
             IF src=dst OR (src IN ('g','kg') AND dst IN ('g','kg')) OR (src IN ('mL','L') AND dst IN ('mL','L')) THEN
