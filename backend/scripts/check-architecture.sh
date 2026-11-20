@@ -19,14 +19,14 @@ go list -f '{{ $p := .ImportPath }}{{range .Imports}}{{printf "%s %s\n" $p .}}{{
 awk '
     $2 !~ /^hi-ve\/backend\// { next }
     $1 == "hi-ve/backend/cmd/api" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|platform\/(entitlements|provisioning)|transport)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|platform\/(entitlements|provisioning))$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|devices|identity|locations|settings|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
     $1 == "hi-ve/backend/internal/platform/entitlements" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit|platform)$/ { next }
-    $1 ~ /^hi-ve\/backend\/internal\/(devices|locations)$/ && $2 == "hi-ve/backend/internal/audit" { next }
+    $1 ~ /^hi-ve\/backend\/internal\/(devices|locations|settings)$/ && $2 == "hi-ve/backend/internal/audit" { next }
     $1 == "hi-ve/backend/internal/identity" && $2 == "hi-ve/backend/internal/audit" { next }
     { print "Unexpected module dependency:", $1, "->", $2 > "/dev/stderr"; failed=1 }
     END { exit failed }

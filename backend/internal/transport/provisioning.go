@@ -22,6 +22,7 @@ import (
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
+	"hi-ve/backend/internal/settings"
 )
 
 const (
@@ -48,6 +49,7 @@ type API struct {
 	Entitlements           entitlements.Service
 	Memberships            identity.MembershipLifecycle
 	Locations              locations.Service
+	Settings               settings.Service
 	Devices                devices.Service
 	LoginHistory           audit.LoginHistory
 	Google                 Google
@@ -64,6 +66,7 @@ func (a API) Handler() http.Handler {
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
 	a.operationalRoutes(mux)
+	a.receiptRoutes(mux)
 	a.loginHistoryRoutes(mux)
 	mux.HandleFunc("POST /api/v1/admin/tenants", a.admin(a.create))
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/activate", a.admin(a.activate))
