@@ -132,8 +132,8 @@ expect_sql hive_sessions_upgrade "SELECT count(*) FROM hive.tenant_memberships m
     WHERE g.subject='session-upgrade-fixture' AND m.active AND m.lifecycle_revision=0" 1
 expect_sql hive_sessions_upgrade "SELECT count(*) FROM pg_constraint
     WHERE conrelid='hive.tenant_memberships'::regclass AND convalidated
-    AND conname IN ('tenant_memberships_principal_id_fkey','membership_identity_principal_fk')" 2
-printf 'PASS: principal backfill preserves member IDs and keeps both validated membership FKs\n'
+    AND conname IN ('membership_identity_principal_fk','membership_owner_google_fk','membership_owner_google_shape')" 3
+printf 'PASS: principal backfill preserves member IDs and retained constraints\n'
 sql hive_sessions_upgrade "CREATE ROLE hive_legacy_identity_fixture NOLOGIN;
     GRANT USAGE ON SCHEMA hive TO hive_legacy_identity_fixture;
     GRANT SELECT, INSERT, UPDATE ON hive.google_principals TO hive_legacy_identity_fixture;
@@ -273,11 +273,22 @@ expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.tenant_receipt_setting
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
 printf 'PASS: receipt settings upgrade preserves existing Owner sessions and starts without overrides\n'
 
-migrate hive_online_upgrade migrations
-expect_sql hive_online_upgrade "$version" "$latest"
+cp migrations/028_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 28
 expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.device_bootstrap_receipts' 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
 printf 'PASS: upgrade 027 to device bootstrap preserves existing sessions\n'
+
+migrate hive_online_upgrade migrations
+expect_sql hive_online_upgrade "$version" "$latest"
+legacy_fk="SELECT count(*) FROM pg_constraint WHERE conrelid='hive.tenant_memberships'::regclass
+    AND conname='tenant_memberships_principal_id_fkey'"
+expect_sql hive_online_upgrade "$legacy_fk" 0
+expect_sql hive_test "$legacy_fk" 0
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_memberships WHERE role='primary_owner' AND owner_google_principal_id=principal_id" 5
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
+printf 'PASS: fresh and upgraded schema 029 remove the old FK and preserve Owner anchors and sessions\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \

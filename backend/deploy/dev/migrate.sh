@@ -8,6 +8,21 @@ if [[ $# -gt 1 || ( "$action" != status && "$action" != migrate ) ]]; then
     printf 'Penggunaan: %s [status|migrate]\n' "$0" >&2
     exit 2
 fi
+# The persistent Compose path is approved only through migration 028.
+# Give Tern a sealed copy of that prefix so it cannot see Contract 029.
+development_schema_limit=28
+development_migrations=$(mktemp -d)
+trap 'rm -rf -- "$development_migrations"' EXIT
+for ((version=1;version<=development_schema_limit;version++)); do
+    printf -v prefix '%03d' "$version"
+    files=("$backend_dir/migrations/${prefix}_"*.sql)
+    if [[ ${#files[@]} -ne 1 || ! -f "${files[0]}" ]]; then
+        printf 'Preflight gagal: migrasi development %s harus tersedia tepat satu kali.\n' "$prefix" >&2
+        exit 1
+    fi
+    cp -- "${files[0]}" "$development_migrations/"
+done
+printf 'Migrator Compose development dibatasi hingga schema %s.\n' "$development_schema_limit" >&2
 docker_local() {
     env -u DOCKER_HOST -u DOCKER_CONTEXT docker --context default "$@"
 }
@@ -31,5 +46,5 @@ fi
 # Use a fresh environment so service files, DSNs, and PG* values cannot override the target.
 # Pass the password in the child environment without adding it to argv or printing it.
 env -i PATH="$PATH" bash -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec tern "$@"' hive-tern "$action" \
-    --config "$backend_dir/migrations/tern.conf" --migrations "$backend_dir/migrations" \
+    --config "$backend_dir/migrations/tern.conf" --migrations "$development_migrations" \
     --conn-string "host=127.0.0.1 port=55432 user=hive_dev dbname=hive_dev sslmode=disable connect_timeout=5 lock_timeout=5000 statement_timeout=30000" <<<"$password"

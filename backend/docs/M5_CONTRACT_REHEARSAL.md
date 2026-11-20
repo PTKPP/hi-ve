@@ -1,6 +1,6 @@
 # Rehearsal kompatibilitas M5 Contract
 
-**Cakupan.** Pembuktian implementasi untuk Issue #6 pada PostgreSQL 18 disposable. Kandidat `029_m5_contract_candidate.sql` berada di `scripts/fixtures/m5/`. Rantai migrasi utama tetap di 028. Kandidat hanya melepas `tenant_memberships_principal_id_fkey`; tidak ada writer onboarding atau login PIN-only.
+**Cakupan.** Migrasi `029_m5_contract.sql` telah disetujui untuk promosi ke rantai utama. Pernyataan SQL tetap sama dengan kandidat yang lulus rehearsal. Migrasi hanya melepas `tenant_memberships_principal_id_fkey`. Promosi source tidak memberi izin menjalankannya pada target persisten. Migrator Compose development hanya menyediakan 001–028 ke Tern dan binary API tetap mendukung schema 028. Onboarding dan login PIN-only menunggu persetujuan DV3.
 
 ## Menjalankan bukti
 
@@ -11,7 +11,7 @@ go install github.com/jackc/tern/v2@v2.4.3
 PATH="$(go env GOPATH)/bin:$PATH" bash scripts/rehearse-m5-contract.sh
 ```
 
-Script membuat PostgreSQL baru menggunakan image yang dipin, `tmpfs`, dan port loopback acak. Koneksi tersusun dari container disposable yang baru dibuat. Script tidak menerima DSN atau Compose project dan mengabaikan override endpoint Docker. Tern menjalankan 001–028 lebih dulu. Harness baru menggunakan kandidat 029 dari salinan direktori migrasi sementara. 030–032 adalah langkah pemulihan khusus fixture yang dibuat di direktori sementara. Tidak ada perubahan pada ledger migrasi repository. Otomasi CI menjalankan perintah yang sama. [Script rehearsal](../scripts/rehearse-m5-contract.sh) · [Kandidat 029](../scripts/fixtures/m5/029_m5_contract_candidate.sql)
+Script membuat PostgreSQL baru menggunakan image yang dipin, `tmpfs`, dan port loopback acak. Koneksi tersusun dari container disposable yang baru dibuat. Script tidak menerima DSN atau Compose project dan mengabaikan override endpoint Docker. Tern menjalankan 001–028 lebih dulu. Harness menjalankan file 029 yang dipromosikan dari salinan direktori migrasi sementara. 030–032 adalah langkah pemulihan khusus fixture yang dibuat di direktori sementara. Tidak ada perubahan pada ledger migrasi repository. Otomasi CI menjalankan perintah yang sama. [Script rehearsal](../scripts/rehearse-m5-contract.sh) · [Migrasi 029](../migrations/029_m5_contract.sql)
 
 | Binary Go native | Tujuan |
 |---|---|
@@ -30,9 +30,9 @@ Binary berkomunikasi melalui API HTTP asli dan memakai role fixture tanpa owners
 
 ## Batas dan prosedur pemulihan untuk keputusan berikutnya
 
-1. Setelah disetujui, review kandidat satu-file forward dan verifikasi hanya FK yang ditargetkan. Periksa constraint tervalidasi dan index Owner, rekonsiliasi membership/Google, serta uji runtime grants dan SLA lock pada data representatif. `ACCESS EXCLUSIVE` dapat menunggu transaksi yang sudah membuka tabel membership dan membuat akses berikutnya mengantre. Rehearsal memakai `lock_timeout` 5 detik dan `statement_timeout` 15 detik pada fixture. Tetapkan batas job, window perubahan, pemantauan lock, dan cara menghentikan writer pada target yang disetujui.
+1. Sebelum menjalankan migrasi yang telah dipromosikan pada target persisten, peroleh persetujuan khusus target dan verifikasi hanya FK yang ditargetkan. Periksa constraint tervalidasi dan index Owner, rekonsiliasi membership/Google, serta uji runtime grants dan SLA lock pada data representatif. `ACCESS EXCLUSIVE` dapat menunggu transaksi yang sudah membuka tabel membership dan membuat akses berikutnya mengantre. Rehearsal memakai `lock_timeout` 5 detik dan `statement_timeout` 15 detik pada fixture. Tetapkan batas job, window perubahan, pemantauan lock, dan cara menghentikan writer pada target yang disetujui.
 2. Jika kandidat timeout atau gagal sebelum commit, hentikan rollout. Baca `tern status` dan periksa FK serta version table. Jalankan ulang hanya setelah blocker selesai. Tern menerapkan transaksi per file.
 3. Bila kandidat sudah commit dan hitungan membership tanpa Google adalah nol, hentikan writer terkait dan ulangi rekonsiliasi sebelum pemulihan. Gunakan migrasi forward untuk menambah FK semula dengan `NOT VALID`, lalu validasi dalam transaksi. Pastikan FK tervalidasi sebelum melanjutkan traffic. Mekanisme yang dapat dijalankan ini diuji sebagai langkah 030 pada fixture.
 4. Bila data neutral-only sudah ada, hentikan pembukaan profil baru yang terkait. Pertahankan UUID dan histori. Gunakan binary rollback yang sudah terbukti kompatibel atau lakukan roll-forward. Rehearsal memverifikasi baseline rollback untuk fitur yang ada saat ini. Kompatibilitas terhadap PIN bagi operator yang kelak sudah terdaftar memerlukan pengujian dan persetujuan DV3 tersendiri.
 
-Bukti ini mendukung review GO/NO-GO untuk promosi kandidat. Pelepasan FK pada rantai utama atau target persisten, enablement DV3/PIN-only, merge dan deployment mengikuti persetujuan masing-masing. [Issue #6](https://github.com/PTKPP/hi-ve/issues/6)
+Promosi source sudah disetujui. Eksekusi pada target persisten, enablement DV3/PIN-only, merge, dan deployment mengikuti persetujuan masing-masing. [Issue #6](https://github.com/PTKPP/hi-ve/issues/6)

@@ -56,8 +56,8 @@ func TestM5ContractRehearsal(t *testing.T) {
 	}
 
 	runner := m5MigrationDir(t)
-	candidateSQL := filepath.Join(m5BackendRoot(t), "scripts", "fixtures", "m5", "029_m5_contract_candidate.sql")
-	m5CopyFile(t, candidateSQL, filepath.Join(runner, "029_m5_contract_candidate.sql"))
+	candidateSQL := filepath.Join(m5BackendRoot(t), "migrations", "029_m5_contract.sql")
+	m5CopyFile(t, candidateSQL, filepath.Join(runner, "029_m5_contract.sql"))
 	t.Run("lock timeout retains original version and constraint", func(t *testing.T) {
 		tx, err := db.Begin(t.Context())
 		if err != nil {
