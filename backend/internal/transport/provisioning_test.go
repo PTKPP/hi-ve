@@ -39,6 +39,27 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func signedProvider(t *testing.T) (*identity.Google, func(string, string, string) string) {
 	t.Helper()
+	provider, token := localOIDCProvider(t)
+	endpoint, err := url.Parse(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "accounts.google.com" {
+			r = r.Clone(r.Context())
+			r.URL.Scheme, r.URL.Host = endpoint.Scheme, endpoint.Host
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	google, err := identity.NewGoogle(oidc.ClientContext(t.Context(), client), "test-client", "test-secret", "https://api.example.test/api/v1/oidc/google/callback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return google, token
+}
+
+func localOIDCProvider(t *testing.T) (string, func(string, string, string) string) {
+	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -66,22 +87,7 @@ func signedProvider(t *testing.T) (*identity.Google, func(string, string, string
 		}
 	}))
 	t.Cleanup(provider.Close)
-	endpoint, err := url.Parse(provider.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Host == "accounts.google.com" {
-			r = r.Clone(r.Context())
-			r.URL.Scheme, r.URL.Host = endpoint.Scheme, endpoint.Host
-		}
-		return http.DefaultTransport.RoundTrip(r)
-	})}
-	google, err := identity.NewGoogle(oidc.ClientContext(t.Context(), client), "test-client", "test-secret", "https://api.example.test/api/v1/oidc/google/callback")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return google, func(subject, nonce, variant string) string {
+	return provider.URL, func(subject, nonce, variant string) string {
 		claims := map[string]any{"iss": issuer, "aud": "test-client", "sub": subject, "nonce": nonce, "exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix()}
 		switch variant {
 		case "issuer":
