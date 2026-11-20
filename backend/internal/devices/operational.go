@@ -153,7 +153,15 @@ func (s Service) RemoveOperatorAccess(ctx context.Context, tx pgx.Tx, tenant, me
 	if _, err := tx.Exec(ctx, `DELETE FROM hive.device_operator_assignments WHERE tenant_id=$1 AND member_id=$2`, tenant, member); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE hive.operational_contexts SET ended_at=clock_timestamp() WHERE tenant_id=$1 AND member_id=$2 AND ended_at IS NULL`, tenant, member)
+	return s.EndMemberContexts(ctx, tx, tenant, member)
+}
+
+func (s Service) EndMemberContexts(ctx context.Context, tx pgx.Tx, tenant, member string) error {
+	_, err := tx.Exec(ctx, `WITH targets AS (
+        SELECT device_id,id FROM hive.operational_contexts
+        WHERE tenant_id=$1 AND member_id=$2 AND ended_at IS NULL ORDER BY device_id,id FOR UPDATE
+    ) UPDATE hive.operational_contexts c SET ended_at=clock_timestamp()
+      FROM targets WHERE c.tenant_id=$1 AND c.device_id=targets.device_id AND c.id=targets.id`, tenant, member)
 	return err
 }
 

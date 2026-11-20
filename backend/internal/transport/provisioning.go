@@ -48,6 +48,7 @@ type API struct {
 	TenantRBAC             identity.RBAC
 	Entitlements           entitlements.Service
 	Memberships            identity.MembershipLifecycle
+	StaffPIN               *identity.PIN
 	Locations              locations.Service
 	Settings               settings.Service
 	Devices                devices.Service
@@ -62,6 +63,7 @@ func (a API) Handler() http.Handler {
 	a.rbacRoutes(mux)
 	a.entitlementRoutes(mux)
 	a.membershipRoutes(mux)
+	a.staffPINRoutes(mux)
 	a.locationRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -78,11 +79,15 @@ func run(ctx context.Context) error {
 	deviceService := devices.Service{DB: db, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
 		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets,
 		LockOperatorMember: identity.LockOperatorMember, AuthorizeOperator: identity.AuthorizeDeviceOperator}
-	api := transport.API{Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
+	staffPIN, err := configuredPIN(db, key, version, deviceService)
+	if err != nil {
+		return err
+	}
+	api := transport.API{StaffPIN: staffPIN, Provisioning: provisioning.Service{DB: db, FingerprintKey: key}, Identity: identity.Store{DB: db},
 		LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
 		Devices:      deviceService,
 		Settings:     settings.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
-		Locations:    locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
+		Locations:    locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, StaffPINSchema: version >= 31, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8080"
@@ -189,4 +194,39 @@ func mailer() (func(context.Context, provisioning.Delivery) error, error) {
 		}
 		return data.Close()
 	}, nil
+}
+
+func configuredPIN(db *pgxpool.Pool, fingerprint []byte, schema int, devices devices.Service) (*identity.PIN, error) {
+	currentKey := os.Getenv("HIVE_PIN_PEPPER")
+	currentVersion := os.Getenv("HIVE_PIN_PEPPER_VERSION")
+	previousKey := os.Getenv("HIVE_PIN_PREVIOUS_PEPPER")
+	previousVersion := os.Getenv("HIVE_PIN_PREVIOUS_PEPPER_VERSION")
+	if currentKey == "" && currentVersion == "" && previousKey == "" && previousVersion == "" {
+		return nil, nil
+	}
+	if schema < 31 {
+		return nil, errors.New("DV3 PIN requires compatible schema")
+	}
+	current, err := strconv.Atoi(currentVersion)
+	key, keyErr := hex.DecodeString(currentKey)
+	previous := 0
+	if previousVersion != "" {
+		previous, err = parsePINPrevious(previousVersion, err)
+	}
+	old, oldErr := hex.DecodeString(previousKey)
+	if err != nil || keyErr != nil || oldErr != nil {
+		return nil, identity.ErrPINKey
+	}
+	return identity.NewPIN(db, fingerprint, current, key, previous, old, devices.EndMemberContexts)
+}
+
+func parsePINPrevious(raw string, currentErr error) (int, error) {
+	if currentErr != nil {
+		return 0, currentErr
+	}
+	version, err := strconv.Atoi(raw)
+	if err != nil || version < 1 {
+		return 0, identity.ErrPINKey
+	}
+	return version, nil
 }

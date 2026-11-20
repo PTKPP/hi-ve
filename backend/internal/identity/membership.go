@@ -15,6 +15,7 @@ import (
 
 type MembershipLifecycle struct {
 	DB                   *pgxpool.Pool
+	StaffPINSchema       bool
 	FingerprintKey       []byte
 	RemoveOperatorAccess func(context.Context, pgx.Tx, string, string) error
 }
@@ -111,6 +112,15 @@ func (s MembershipLifecycle) Transition(ctx context.Context, tenant, member, tok
 		var revokedSessions int64
 		revokedRoles := []string{}
 		if !enable {
+			if s.StaffPINSchema {
+				if _, err = tx.Exec(ctx, `UPDATE hive.member_pin_credentials SET revision=revision+1,pepper_version=NULL,salt=NULL,verifier=NULL
+                    WHERE tenant_id=$1 AND member_id=$2 AND verifier IS NOT NULL`, tenant, member); err != nil {
+					return err
+				}
+				if _, err = tx.Exec(ctx, `DELETE FROM hive.member_pin_attempt_state WHERE tenant_id=$1 AND member_id=$2`, tenant, member); err != nil {
+					return err
+				}
+			}
 			if s.RemoveOperatorAccess != nil {
 				if err = s.RemoveOperatorAccess(ctx, tx, tenant, member); err != nil {
 					return err

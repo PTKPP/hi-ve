@@ -52,7 +52,7 @@ port=$(docker_local port "$container" 5432/tcp)
 [[ "$port" =~ ^127\.0\.0\.1:[0-9]+$ ]]
 dsn="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5&statement_timeout=15000"
 migrations=(migrations/*.sql)
-[[ ${#migrations[@]} -eq 29 ]]
+[[ -f migrations/029_m5_contract.sql ]]
 env -i PATH="$PATH" tern migrate --config migrations/tern.conf --conn-string "$dsn" --migrations migrations --destination 28 >"$scratch/baseline.log" 2>&1 || {
     tail -30 "$scratch/baseline.log"
     exit 1

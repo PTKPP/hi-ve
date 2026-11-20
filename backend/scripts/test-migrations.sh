@@ -280,6 +280,9 @@ expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.device_bootstrap_recei
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
 printf 'PASS: upgrade 027 to device bootstrap preserves existing sessions\n'
 
+cp migrations/029_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 29
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
 legacy_fk="SELECT count(*) FROM pg_constraint WHERE conrelid='hive.tenant_memberships'::regclass
@@ -288,8 +291,8 @@ expect_sql hive_online_upgrade "$legacy_fk" 0
 expect_sql hive_test "$legacy_fk" 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_memberships WHERE role='primary_owner' AND owner_google_principal_id=principal_id" 5
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
-printf 'PASS: fresh and upgraded schema 029 remove the old FK and preserve Owner anchors and sessions\n'
+printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner anchors and sessions\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|ReceiptSettings)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|ReceiptSettings)Postgres$'
