@@ -3,28 +3,35 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Always provision the target here. No caller-supplied database connection is used.
+docker_local() {
+    env -u DOCKER_HOST -u DOCKER_CONTEXT docker --context default "$@"
+}
+if [[ $(docker_local context inspect default --format '{{(index .Endpoints "docker").Host}}') != unix://* ]]; then
+    printf 'Disposable tests require a local Docker socket.\n' >&2
+    exit 1
+fi
 scratch=$(mktemp -d)
 container=
 cleanup() {
-    if [[ -n "$container" ]]; then docker rm -f "$container" >/dev/null; fi
+    if [[ -n "$container" ]]; then docker_local rm -f "$container" >/dev/null; fi
     rm -rf -- "$scratch"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-container=$(docker run --rm -d -p 127.0.0.1::5432 --tmpfs /var/lib/postgresql     -e POSTGRES_PASSWORD=hive_disposable_test -e POSTGRES_DB=hive_test     postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61)
-port=$(docker port "$container" 5432/tcp)
+container=$(docker_local run --rm -d -p 127.0.0.1::5432 --tmpfs /var/lib/postgresql     -e POSTGRES_PASSWORD=hive_disposable_test -e POSTGRES_DB=hive_test     postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61)
+port=$(docker_local port "$container" 5432/tcp)
 for ((attempt = 0; attempt < 60; attempt++)); do
-    if docker exec "$container" pg_isready -h 127.0.0.1 -U postgres -d hive_test >/dev/null; then
+    if docker_local exec "$container" pg_isready -h 127.0.0.1 -U postgres -d hive_test >/dev/null; then
         break
     fi
     sleep 1
 done
-docker exec "$container" pg_isready -h 127.0.0.1 -U postgres -d hive_test
+docker_local exec "$container" pg_isready -h 127.0.0.1 -U postgres -d hive_test
 
 sql() {
-    docker exec "$container" psql -XAt -v ON_ERROR_STOP=1 -U postgres -d "$1" -c "$2"
+    docker_local exec "$container" psql -XAt -v ON_ERROR_STOP=1 -U postgres -d "$1" -c "$2"
 }
 migrate() {
     # Explicit config and connection settings isolate the runner from local defaults.

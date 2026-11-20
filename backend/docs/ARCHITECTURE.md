@@ -1,7 +1,7 @@
 # Hi-Ve Backend Architecture — Go Screaming Modular Monolith
 
 > **Target placement:** `backend/docs/ARCHITECTURE.md` in the Hi-Ve repository.  
-> **Document version:** Architecture Draft 02 · 19 November 2026 (Asia/Jakarta).  
+> **Document version:** Architecture Draft 03 · deployment topology revised.
 > **Status:** **DESIGN BASELINE / REVIEW REQUIRED**. Approved product and architecture *principles* are distinguished from proposed implementation patterns. No actual Hi-Ve Go repository was inspected for this document; file paths, package names, database layouts, endpoints, event names, and testing commands are **examples, not an as-built description**.  
 > **Applies to:** the single Hi-Ve Go backend and its integration boundaries. Frontend, database migrations, deployment, and infrastructure changes require independent authorization.  
 > **Authoritative sources:** canonical [PRD](../../PRD.md) (v04, CAP-01–CAP-58), [Functional Specification](../../FUNCTIONAL_SPEC.md) (57 FR: 36 baseline + 21 derived), and [Backend Agent Instructions](../AGENTS.md). The supplied SPK-SPN `AGENTS.md` was used **only** as an example of architecture guardrails; its domains and TypeScript-specific implementation are **not** Hi-Ve requirements.
@@ -40,14 +40,14 @@ This document translates Hi-Ve's approved product architecture into reviewable e
         |                               |
         |                    +--------------------+
         |                    | Go Modular Monolith |
-        |                    | VPS/VM, one deploy  |
+        |                    | container on app VM |
         |                    | app API + admin API |
         |                    +---------+----------+
         |                              |
         |                    +---------+----------+
         |                    |                    |
         |                PostgreSQL            Redis (optional)
-        |                system of record      support/cache only
+        |                on separate DB VM     support/cache only
         +-------------------- (no platform business logic at edge)
 ```
 
@@ -59,6 +59,12 @@ This document translates Hi-Ve's approved product architecture into reviewable e
 - Cloudflare availability does **not** guarantee availability of Go VPS or durability of browser IndexedDB.
 
 **Deployment choices are approved (CAP-17–20, CAP-51/54); the exact hostnames, OAuth redirect URIs, session cookie scopes, CORS allowlist, Cloudflare routing config, and rollback procedures are OPEN-015.**
+
+### 2.1 Development and Proxmox production topology — APPROVED
+
+- **Development:** Build and run the native Go binary via a systemd user unit. Run PostgreSQL 18 in Docker Compose with a persistent named volume and a loopback-only published port. Keep runtime configuration and secrets in local environment files. Automated integration tests use a separate disposable PostgreSQL instance.
+- **Production target:** Run the Go backend as a container on the Proxmox application VM. Compose can manage the backend. PostgreSQL runs natively on a separate VM. Connect over a private network through a firewall allowlist and PostgreSQL TLS with certificate and hostname verification. The backend image contains no database service.
+- **Migration and recovery:** Both environments use the same PostgreSQL schema, migration files and HTTP contracts. Production separates application and migration roles and runs Tern as an explicit controlled process. Replica startup verifies the schema. Backup and restore evidence, health probes, and a compatible application rollback are release gates. See [deployment procedures](DEPLOYMENT.md). OPEN-015 still covers validation of the actual hosts, ingress, credentials, and integrations.
 
 ## 3. Screaming Modular Monolith — APPROVED principle
 
@@ -285,7 +291,7 @@ The backend does **not** bypass current tenant/device/entitlement checks solely 
 
 ### 9.2 PostgreSQL — Modular Database Architecture + Evolutionary Database Design
 
-**Status:** PostgreSQL as authoritative system of record and logical domain ownership are **APPROVED principles** (PRD). **Modular Database Architecture + Evolutionary Database Design** are the database engineering guardrails for future changes. This section does **not** approve physical schemas per domain, database-per-module, RLS, particular table names, migration tools or any DDL execution; those remain **DESIGN OPTIONS / NOT VERIFIED** until reviewed against the actual repository.
+**Status:** PostgreSQL as authoritative system of record and logical domain ownership are **APPROVED principles** (PRD). **Modular Database Architecture + Evolutionary Database Design** are the database engineering guardrails for future changes. This section does **not** approve physical schemas per domain, database-per-module, RLS, particular table names or any DDL execution; those remain **DESIGN OPTIONS / NOT VERIFIED** until reviewed against the actual repository.
 
 #### 9.2.1 Logical ownership and extension boundaries
 

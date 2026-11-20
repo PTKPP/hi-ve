@@ -1,0 +1,15 @@
+[Unit]
+Description=Hi-Ve API development
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/hi-ve/backend.env
+ExecStart=%h/.local/bin/hive-api
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

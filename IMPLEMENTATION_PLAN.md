@@ -262,6 +262,17 @@ Baseline Draft PR #3 di `feat/phase-02-platform` adalah `9224739811748ba78a62024
 
 **Tahap berikutnya.** Phase 02 tetap IN PROGRESS. Issue #6, #8 dan #9 tetap OPEN karena ada lingkup tersisa. PR #3 tetap draft. OPEN-001/006/007/008/013/015 tidak berubah. [Issue #6](https://github.com/PTKPP/hi-ve/issues/6) · [Issue #8](https://github.com/PTKPP/hi-ve/issues/8) · [Issue #9](https://github.com/PTKPP/hi-ve/issues/9) · [Pemeriksaan HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks)
 
+## Increment 02.21 · Audit merge dan topologi infrastruktur
+
+Audit Draft PR #3 pada baseline `6f856fb491f60e7bcb9eb2d7ab17c54292588753`. GitHub menunjukkan `MERGEABLE`, `CLEAN` dan dua CI PASS pada SHA tersebut. Exit gate Phase 02 masih terbuka. Rekomendasi mempertahankan PR #3 sebagai Draft dan meninjau subset fondasi hanya jika dibutuhkan merge lebih dini. Penggabungan subset memerlukan batas acceptance dan dependency migrasi yang disepakati, CI independen, dan approval merge. [Audit merge, acceptance dan migrasi 001–027](backend/docs/PHASE_02_MERGE_REVIEW.md) · [Pemeriksaan HEAD PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks)
+
+| Area | Status, batas dan tindakan |
+|---|---|
+| Gate merge Phase 02 | **BELUM LULUS.** DV3 serta sesi operator nyata, outlet switch, S3-G/S3-A, audit tambahan dan acceptance per-field/consumer masih terbuka. Review DV2 juga menemukan penerbitan challenge yang membebankan kuota perangkat sebelum proof. Temuan menahan subset yang mengekspos endpoint tersebut. [Issue #8](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7029452079) |
+| Development | **APPROVED dan dikonfigurasi.** Binary Go native melalui systemd user, PostgreSQL 18 Compose dengan named volume dan binding loopback, env contoh bebas secret, migrator forward khusus development, dan automated database disposable terpisah. Daemon/DSN eksternal diabaikan oleh jalur migrasi/tes lokal. [Panduan startup, shutdown dan restore](backend/docs/DEPLOYMENT.md) |
+| Production Proxmox | **Topologi APPROVED, target NOT VERIFIED.** Container backend di VM aplikasi, PostgreSQL native di VM DB, private network, firewall allowlist, TLS `verify-full`, role app/migrator terpisah dan job migrasi terkontrol. Masih perlu bukti firewall/TLS, runtime privileges, backup/PITR/restore, readiness, rollback dan integrasi OPEN-015 pada target. Tidak ada deployment atau akses VM production. [Desain production](backend/docs/DEPLOYMENT.md) |
+| Gate lokal | **PASS.** Build, vet, race, format, architecture guard, actionlint dan PostgreSQL disposable 001–027, termasuk upgrade konkuren, retry dan rollback DDL. Smoke Compose memakai project sementara, membuktikan migrasi/retry dengan override host yang diabaikan, volume bertahan setelah down/up, serta backup/restore ke DB kosong. Unit systemd lulus verifikasi statis. Startup API via systemd dan integrasi Google/SMTP belum diuji dengan konfigurasi development aktual. |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -293,3 +304,4 @@ Baseline Draft PR #3 di `feat/phase-02-platform` adalah `9224739811748ba78a62024
 | 02.15 | Proposal DV2 operasional, Identity location scope, M5 Contract, DV3 online dan S3 siap untuk review pada Issue #6/#8/#9. Gate baseline lokal PASS dan Draft PR #3 tetap terbuka. |
 | 02.16 | Issue #6/#8/#9 diperbarui dalam bahasa Indonesia dan tetap OPEN. Review M5, LR, DV2 dan S3-T dicatat. Perubahan hanya pada tracker dan catatan Issue. |
 | 02.17–02.20 | LR1–LR4, fondasi DV2 online, pengaman M5 sebelum Contract dan S3-T dipush sebagai empat commit. PostgreSQL disposable dan kedua workflow untuk setiap increment lulus. Issue #6/#8/#9 tetap OPEN untuk scope yang tersisa. |
+| 02.21 | Audit merge menyisakan gate Phase 02 dan temuan challenge DV2. Konfigurasi development lokal teruji. Desain Proxmox tersedia, dengan gate deployment dan status target tetap terpisah. |
