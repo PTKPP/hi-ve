@@ -31,6 +31,7 @@ var (
 )
 
 type RBAC struct {
+	CatalogPrices  bool
 	DB             *pgxpool.Pool
 	FingerprintKey []byte
 	LockOutlets    func(context.Context, pgx.Tx, string, []string) (bool, error)

@@ -26,9 +26,10 @@ var (
 )
 
 type Service struct {
-	DB             *pgxpool.Pool
-	FingerprintKey []byte
-	AuthorizeOwner func(context.Context, pgx.Tx, string, string) (string, error)
+	EndOutletContexts func(context.Context, pgx.Tx, string, string) error
+	DB                *pgxpool.Pool
+	FingerprintKey    []byte
+	AuthorizeOwner    func(context.Context, pgx.Tx, string, string) (string, error)
 }
 
 type CreateInput struct {

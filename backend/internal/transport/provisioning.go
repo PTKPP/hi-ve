@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"hi-ve/backend/internal/audit"
+	"hi-ve/backend/internal/catalog"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
@@ -43,6 +44,7 @@ type Google interface {
 }
 
 type API struct {
+	Catalog                catalog.Service
 	Provisioning           provisioning.Service
 	Identity               identity.Store
 	TenantRBAC             identity.RBAC
@@ -66,6 +68,7 @@ func (a API) Handler() http.Handler {
 	a.membershipRoutes(mux)
 	a.staffPINRoutes(mux)
 	a.locationRoutes(mux)
+	a.catalogRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
 	a.operationalRoutes(mux)

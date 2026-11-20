@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -14,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"hi-ve/backend/internal/audit"
+	"hi-ve/backend/internal/catalog"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
@@ -69,6 +73,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	}
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
+	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, CheckCapability: func(context.Context, pgx.Tx, string, string) error { return nil }}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
@@ -237,6 +242,31 @@ func TestOperatorPINPostgres(t *testing.T) {
 		expectStatus(t, send(handler, "GET", base(device)+"/context", proof, nil, cookies[0]), status)
 	}
 	oldRead(200)
+	// Resolve only the device's live outlet. A device assignment alone does not grant price access.
+	product := id(`INSERT INTO hive.catalog_products(tenant_id,id,name,category,revision) VALUES($1,gen_random_uuid(),'A','B',1) RETURNING id`, tenant)
+	sku := id(`INSERT INTO hive.catalog_skus(tenant_id,id,product_id,code,variant,unit,active,batch_tracked,revision)
+        VALUES($1,gen_random_uuid(),$2,'curah','Curah','g',true,true,1) RETURNING id`, tenant, product)
+	exec(`INSERT INTO hive.catalog_prices(tenant_id,sku_id,outlet_id,revision,amount,actor_id)
+        SELECT $1::uuid,$2::uuid,v.outlet,1,v.amount,m.principal_id FROM hive.tenant_memberships m CROSS JOIN
+        (VALUES ($3::uuid,100::numeric),($4::uuid,200::numeric)) v(outlet,amount) WHERE m.tenant_id=$1 AND m.role='primary_owner'`, tenant, sku, outlet, otherOutlet)
+	pricePath := base(device) + "/catalog/skus/" + sku + "/price"
+	readPrice := func(path string) *httptest.ResponseRecorder {
+		rev := previous.Revision
+		proof := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: previous.ID, Revision: &rev})
+		return send(handler, "GET", path, proof, nil, cookies[0])
+	}
+	expectStatus(t, readPrice(pricePath), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'catalog.pricing.read')`, tenant, role)
+	expectStatus(t, readPrice(pricePath+"?outlet_id="+otherOutlet), 400)
+	priced := readPrice(pricePath)
+	expectStatus(t, priced, 200)
+	var fields map[string]any
+	if err := json.Unmarshal(priced.Body.Bytes(), &fields); err != nil || len(fields) != 4 || fields["amount"] != "100" || fields["price_id"] == nil || fields["revision"] != float64(1) || fields["updated_at"] == nil {
+		t.Fatal("unexpected operator price projection")
+	}
+	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='catalog.pricing.read'`, tenant, role)
+	expectStatus(t, readPrice(pricePath), 403)
+
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)
 	rev := previous.Revision

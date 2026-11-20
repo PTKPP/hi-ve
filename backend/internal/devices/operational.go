@@ -331,6 +331,17 @@ type OperationalContext struct {
 }
 
 func (s Service) UseOperation(ctx context.Context, tenant, device, operation, proof, token string) (OperationalState, OperationalContext, error) {
+	return s.useOperation(ctx, tenant, device, operation, proof, token, nil)
+}
+
+// ReadContext holds authorization, device, outlet and session locks through the reader.
+// Only this read-only operation accepts a projection of the authorized context.
+func (s Service) ReadContext(ctx context.Context, tenant, device, proof, token string, read func(pgx.Tx, OperationalContext) error) error {
+	_, _, err := s.useOperation(ctx, tenant, device, "context.read", proof, token, read)
+	return err
+}
+
+func (s Service) useOperation(ctx context.Context, tenant, device, operation, proof, token string, read func(pgx.Tx, OperationalContext) error) (OperationalState, OperationalContext, error) {
 	var state OperationalState
 	var current OperationalContext
 	var claims operationClaims
@@ -457,6 +468,9 @@ func (s Service) UseOperation(ctx context.Context, tenant, device, operation, pr
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrProof
 			}
+			if err == nil && read != nil {
+				return read(tx, current)
+			}
 			return err
 		}
 		return nil
@@ -464,4 +478,11 @@ func (s Service) UseOperation(ctx context.Context, tenant, device, operation, pr
 	current.ExpiresAt = current.ExpiresAt.UTC()
 	current.IdleExpiresAt = current.IdleExpiresAt.UTC()
 	return state, current, err
+}
+
+// EndOutletContexts runs after Locations locks the outlet for deactivation.
+// Marking contexts ended prevents a later reactivation from reviving old sessions.
+func (s Service) EndOutletContexts(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
+	_, err := tx.Exec(ctx, `UPDATE hive.operational_contexts SET ended_at=clock_timestamp() WHERE tenant_id=$1 AND outlet_id=$2 AND ended_at IS NULL`, tenant, outlet)
+	return err
 }

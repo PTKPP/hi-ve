@@ -14,6 +14,7 @@ import (
 	"hi-ve/backend/internal/audit"
 )
 
+const CatalogPriceRead = "catalog.pricing.read"
 const DeviceOperatorUse = "devices.operators.use"
 
 type LocationAssignment struct {
@@ -44,7 +45,7 @@ func lockLocationMember(ctx context.Context, tx pgx.Tx, tenant, member string, e
 
 // AuthorizeLocationGrant checks the exact grant after locking its membership and supporting roles.
 func AuthorizeLocationGrant(ctx context.Context, tx pgx.Tx, tenant, member, location, action string) error {
-	if action != DeviceOperatorUse {
+	if action != DeviceOperatorUse && action != CatalogPriceRead {
 		return ErrForbidden
 	}
 	if err := lockLocationMember(ctx, tx, tenant, member, false); err != nil {
@@ -71,8 +72,15 @@ func AuthorizeLocationGrant(ctx context.Context, tx pgx.Tx, tenant, member, loca
 
 func (s RBAC) LocationActions(ctx context.Context, tenant, token, target, key string, expected *int64, actions []string) (LocationPolicy[string], error) {
 	const op = "role.location_actions.replace"
-	if key != "" && (expected == nil || *expected < 0 || actions == nil || len(actions) > 1 || (len(actions) == 1 && actions[0] != DeviceOperatorUse)) {
+	if key != "" && (expected == nil || *expected < 0 || actions == nil) {
 		return LocationPolicy[string]{}, ErrRBACInput
+	}
+	actions = slices.Clone(actions)
+	slices.Sort(actions)
+	for i, action := range actions {
+		if (action != DeviceOperatorUse && !(s.CatalogPrices && action == CatalogPriceRead)) || (i > 0 && actions[i-1] == action) {
+			return LocationPolicy[string]{}, ErrRBACInput
+		}
 	}
 	return locationPolicy(ctx, s, tenant, token, target, key, op, expected, actions,
 		func(tx pgx.Tx, write bool) ([]string, error) {
