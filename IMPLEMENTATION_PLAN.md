@@ -459,7 +459,15 @@ Entry PASS. PR #10 merged ke main pada `ac1356f2c14a13d317bfcaecf166c838f248797e
 | 04.5 · FR-RET-03, FR-COUNT-01/02 | Kontrak Go untuk draft adjustment, snapshot stok dan revisi, pencatatan fisik, serta deteksi perubahan setelah snapshot. Posting koreksi dan pengujian alur persetujuan diblokir oleh OPEN-003. |
 | 04.6 · Sales dan regresi | `PostSale` memakai transaksi caller dan hanya mendebit stok tersedia di outlet aktif. Tes membuktikan rollback checkout dan perebutan stok terakhir. Sales 05 memiliki checkout, snapshot, serta alur retur/void dan event bisnis. |
 
-PostgreSQL disposable lulus pada schema 046, termasuk upgrade 036→046 dan regresi Phase 02–03. Format, vet, race, build, guard arsitektur dan preflight Compose lulus lokal. Phase 04 tetap **IN PROGRESS**. Final Audit dilakukan setelah policy OPEN-003 terintegrasi dan exit gate lengkap. [CI branch](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-04-inventory) [Kontrak Inventory](backend/docs/INVENTORY.md)
+PostgreSQL disposable lulus pada schema 046, termasuk upgrade 036→046 dan regresi Phase 02–03. Format, vet, race, build, guard arsitektur dan preflight Compose lulus lokal. Final Audit mengikuti bukti pada increment terakhir. [CI branch](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-04-inventory) [Kontrak Inventory](backend/docs/INVENTORY.md)
+
+## Increment 04.7 · Approval dan operasi Inventory
+
+**Keputusan OPEN-003 untuk Inventory.** Adjustment dan koreksi opname wajib disetujui sebelum posting. Snapshot yang berubah perlu pengukuran ulang. Penyelesaian discrepancy wajib approval dan alasan. Primary Owner aktif atau staf berizin eksplisit pada lokasi terkait dapat menyetujui. Self-approval staf ditolak. Owner dapat menyetujui sendiri dengan alasan dan audit. Transfer cepat memerlukan izin khusus di sumber dan tujuan tanpa approval kedua. Role tidak mendapat izin berdasarkan nama. [Issue #12](https://github.com/PTKPP/hi-ve/issues/12)
+
+Migrasi 047 menambah bukti approval/rejection immutable, mengarsipkan pengukuran opname yang disetujui, dan menyimpan jumlah discrepancy yang sudah diselesaikan. Grant RBAC lokasi dan challenge perangkat diperluas secara aditif. Approval dan mutasi stok memakai transaksi yang sama. Audit mencatat alasan, requester, aktor, waktu dan dokumen. Inventory tetap menjadi pemilik ledger/saldo. [Kontrak Inventory](backend/docs/INVENTORY.md)
+
+OPEN-002 dan OPEN-014 tetap terbuka. Checkout, snapshot harga dan alur finansial tetap pada Phase 05. Penanganan antrean offline dan laporan lintas lokasi tetap mengikuti Phase 06–07. [Draft PR #11](https://github.com/PTKPP/hi-ve/pull/11)
 
 ## Riwayat checkpoint
 

@@ -19,9 +19,9 @@ const (
 )
 
 type Transfer struct {
-	Destination string
-	Item        Measure
-	Quick       bool
+	Destination string  `json:"destination_id"`
+	Item        Measure `json:"item"`
+	Quick       bool    `json:"quick"`
 }
 
 func (s Service) authorizeRoute(ctx context.Context, tx pgx.Tx, scope Scope, action, source, destination string) error {
@@ -132,7 +132,7 @@ func (s Service) DispatchTransfer(ctx context.Context, tx pgx.Tx, scope Scope, i
 type TransferReceipt struct {
 	Transfer          string
 	Source            string
-	Destination       string
+	Destination       string `json:"destination_id"`
 	Quantity          string
 	Unit              string
 	DiscrepancyReason string

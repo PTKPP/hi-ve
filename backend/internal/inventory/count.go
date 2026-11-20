@@ -17,9 +17,9 @@ const (
 )
 
 type Adjustment struct {
-	Item     Measure
-	Decrease bool
-	Reason   string
+	Item     Measure `json:"item"`
+	Decrease bool    `json:"decrease"`
+	Reason   string  `json:"reason"`
 }
 
 func (s Service) DraftAdjustment(ctx context.Context, tx pgx.Tx, scope Scope, id, location string, body Adjustment) error {
@@ -42,8 +42,8 @@ func (s Service) DraftAdjustment(ctx context.Context, tx pgx.Tx, scope Scope, id
 }
 
 type CountItem struct {
-	SKU   string
-	Batch string
+	SKU   string `json:"sku_id"`
+	Batch string `json:"batch_id"`
 }
 
 // StartCount captures all requested saleable stock keys from one statement
@@ -107,10 +107,10 @@ func (s Service) StartCount(ctx context.Context, tx pgx.Tx, scope Scope, id, loc
 }
 
 type CountVariance struct {
-	Snapshot     string
-	Physical     string
-	Difference   string
-	StockChanged bool
+	Snapshot     string `json:"snapshot"`
+	Physical     string `json:"physical"`
+	Difference   string `json:"difference"`
+	StockChanged bool   `json:"stock_changed"`
 }
 
 // RecordCount observes physical stock and returns variance. Observation is

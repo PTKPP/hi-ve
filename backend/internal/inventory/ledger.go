@@ -100,8 +100,7 @@ func apply(ctx context.Context, tx pgx.Tx, tenant, kind, id string, movements []
 	for i, move := range movements {
 		k := move.key
 		if i == 0 || movements[i-1].key != k {
-			if _, err := tx.Exec(ctx, `INSERT INTO hive.inventory_balances(tenant_id,location_id,sku_id,batch_id,bucket,quantity)
-                VALUES($1,$2,$3,NULLIF($4,'')::uuid,$5,0) ON CONFLICT DO NOTHING`, tenant, k.location, k.sku, k.batch, k.bucket); err != nil {
+			if err := ensureBalance(ctx, tx, tenant, k); err != nil {
 				return err
 			}
 		}
@@ -120,4 +119,10 @@ func apply(ctx context.Context, tx pgx.Tx, tenant, kind, id string, movements []
 		}
 	}
 	return nil
+}
+
+func ensureBalance(ctx context.Context, tx pgx.Tx, tenant string, k stockKey) error {
+	_, err := tx.Exec(ctx, `INSERT INTO hive.inventory_balances(tenant_id,location_id,sku_id,batch_id,bucket,quantity)
+        VALUES($1,$2,$3,NULLIF($4,'')::uuid,$5,0) ON CONFLICT DO NOTHING`, tenant, k.location, k.sku, k.batch, k.bucket)
+	return err
 }

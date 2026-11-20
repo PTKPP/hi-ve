@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/inventory"
 	"hi-ve/backend/internal/platform/entitlements"
 )
@@ -122,7 +123,8 @@ func TestInventoryPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	receiveTransfer.Quantity, receiveTransfer.DiscrepancyReason = "2", "missing"
-	must(run(func(tx pgx.Tx) error { return svc.ReceiveTransfer(ctx, tx, scope, uuid(), receiveTransfer) }))
+	discrepancyID := uuid()
+	must(run(func(tx pgx.Tx) error { return svc.ReceiveTransfer(ctx, tx, scope, discrepancyID, receiveTransfer) }))
 	if summary := id(`SELECT remaining::text||'/'||received::text||'/'||discrepancy::text FROM hive.inventory_transfers WHERE tenant_id=$1 AND id=$2`, tenant, transferID); summary != "0/8/2" {
 		t.Fatal(summary)
 	}
@@ -233,8 +235,72 @@ func TestInventoryPostgres(t *testing.T) {
 		return err
 	}))
 
+	approval := inventory.CountApproval{Observations: []string{observation}, Reason: "reviewed physical count"}
+	if err := run(func(tx pgx.Tx) error { return svc.ApproveCount(ctx, tx, scope, countID, destination, approval) }); !errors.Is(err, inventory.ErrStaleSnapshot) {
+		t.Fatal(err)
+	}
+	freshCount, freshObservation := uuid(), uuid()
+	must(run(func(tx pgx.Tx) error {
+		return svc.StartCount(ctx, tx, scope, freshCount, destination, []inventory.CountItem{{SKU: bulk, Batch: batch}})
+	}))
+	physical.Quantity = "17"
+	must(run(func(tx pgx.Tx) error {
+		_, err := svc.RecordCount(ctx, tx, scope, freshCount, freshObservation, destination, physical)
+		return err
+	}))
+	approval.Observations = []string{freshObservation}
+	countApprove := func(tx pgx.Tx) error { return svc.ApproveCount(ctx, tx, scope, freshCount, destination, approval) }
+	must(run(countApprove))
+	must(run(countApprove))
+	if qty := id(`SELECT quantity::text FROM hive.inventory_balances b JOIN hive.inventory_locations l ON(l.tenant_id,l.id)=(b.tenant_id,b.location_id)
+        WHERE b.tenant_id=$1 AND l.location_id=$2 AND b.sku_id=$3 AND b.bucket='available'`, tenant, destination, bulk); qty != "17" {
+		t.Fatal(qty)
+	}
+	resolve := func(tx pgx.Tx) error {
+		return svc.ResolveDiscrepancy(ctx, tx, scope, discrepancyID, destination, inventory.DiscrepancyResolution{Reason: "confirmed found", Found: true})
+	}
+	must(run(resolve))
+	must(run(resolve))
+	if summary := id(`SELECT resolved_discrepancy::text FROM hive.inventory_transfers WHERE tenant_id=$1 AND id=$2`, tenant, transferID); summary != "2" {
+		t.Fatal(summary)
+	}
+
+	correctionID := uuid()
+	correction := inventory.Adjustment{Item: inventory.Measure{SKU: bulk, Batch: batch, Quantity: "1", Unit: "g"}, Decrease: true, Reason: "weighed again"}
+	must(run(func(tx pgx.Tx) error {
+		return svc.DraftAdjustment(ctx, tx, scope, correctionID, destination, correction)
+	}))
+	if err := run(func(tx pgx.Tx) error { return svc.ApproveAdjustment(ctx, tx, scope, correctionID, destination, "") }); !errors.Is(err, inventory.ErrInput) {
+		t.Fatal(err)
+	}
+	correctionApprove := func(tx pgx.Tx) error {
+		return svc.ApproveAdjustment(ctx, tx, scope, correctionID, destination, "owner verified")
+	}
+	approvals := make(chan error, 2)
+	for range 2 {
+		go func() { approvals <- run(correctionApprove) }()
+	}
+	must(<-approvals)
+	must(<-approvals)
+	if count := id(`SELECT count(*)::text FROM hive.inventory_approvals WHERE tenant_id=$1 AND document_id=$2 AND requester_id=$3 AND reason='owner verified'`, tenant, correctionID, actor); count != "1" {
+		t.Fatal(count)
+	}
+	if count := id(`SELECT count(*)::text FROM hive.inventory_movements WHERE tenant_id=$1 AND document_id=$2`, tenant, correctionID); count != "1" {
+		t.Fatal(count)
+	}
+	rejectedID := uuid()
+	must(run(func(tx pgx.Tx) error { return svc.DraftAdjustment(ctx, tx, scope, rejectedID, destination, correction) }))
+	must(run(func(tx pgx.Tx) error {
+		return svc.RejectCorrection(ctx, tx, scope, rejectedID, destination, "measurement rejected", false)
+	}))
+	if err := run(func(tx pgx.Tx) error {
+		return svc.ApproveAdjustment(ctx, tx, scope, rejectedID, destination, "would mutate")
+	}); !errors.Is(err, inventory.ErrConflict) {
+		t.Fatal(err)
+	}
+
 	// Exercise the live Owner/API grant path without provisioning tenant data outside the fixture.
-	app := API{InventoryDB: db, Entitlements: entitlements.Service{DB: db}, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
+	app := API{InventoryDB: db, Devices: devices.Service{InventoryCommands: true}, Entitlements: entitlements.Service{DB: db}, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
 	apiID := uuid()
 	apiReceipt := receive
 	apiReceipt.Item.Batch = uuid()
