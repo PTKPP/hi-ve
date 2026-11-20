@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00 PASS · Phase 01 COMPLETED · Phase 02 selesai untuk scope 02.35.** Final Audit dan bukti per gate tercatat pada [Increment 02.36](#increment-0236--final-audit-phase-02). PR #3 tetap Draft dan siap untuk review merge. Keputusan merge dan kesiapan target memiliki gate tersendiri.
+**Phase 00–02 selesai · Phase 03 IN PROGRESS.** PR #3 sudah merged di `96c930f0e712e1277c27c9e9df0af1168ecdd6e8`. Implementasi Catalog dan Locations berada di `feat/phase-03-catalog`. [Draft PR #10](https://github.com/PTKPP/hi-ve/pull/10) · [Kontrak dan API](backend/docs/CATALOG_LOCATIONS.md)
 
 ## Audit dan exit Phase 00
 
@@ -25,8 +25,8 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 |---|---|---|---|
 | 00 · PASS | Audit baseline, baca dokumen wajib, identifikasi supersession, desain urutan dan verifikasi prasyarat engineering | Lima gate audit di atas lulus | Entry 01 telah diverifikasi |
 | 01 · COMPLETED | Fondasi Go, registry canonical, migrasi PostgreSQL, integration environment disposable, dan batas paket. Entry 00 PASS, toolchain tersedia, ID lengkap dan stabil (CAP-01–05/18/23/47) | Build dan regresi registry lulus, batas dependensi teruji, migrasi lulus pada database baru dan upgrade dari baseline termasuk retry, concurrency dan rollback. Workflow aktual lulus pada commit foundation | PR #1 merged dan hasil merge terverifikasi |
-| 02 · COMPLETED | Platform, Identity, Locations Foundation, Devices, Settings dan Audit online sesuai 02.35 | Final Audit 02.36 PASS pada PostgreSQL disposable dan CI | Review merge Draft PR #3 |
-| 03 · MENUNGGU ENTRY | Catalog, fitur Locations lanjutan dengan ID foundation yang sama, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | Turunkan kasus FR-PRD-01–04 dan FR-LOC-01–02 ke fixture dua tenant |
+| 02 · COMPLETED | Platform, Identity, Locations Foundation, Devices, Settings dan Audit online sesuai 02.35 | Final Audit 02.36 PASS pada PostgreSQL disposable dan CI | PR #3 merged pada `96c930f` |
+| 03 · IN PROGRESS | Catalog, fitur Locations lanjutan dengan ID foundation yang sama, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | Review increment 03.1–03.3 dan keputusan entitlement pricing |
 | 04 · MENUNGGU 03 | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | Rancang kontrak Inventory dan fixture stok terakhir. Review OPEN-003 dan detail packaging/costing yang terdampak |
 | 05 · MENUNGGU 04 | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | Telusuri FR-POS/RET dan FR-HV-RCP-001, tes dua checkout berebut stok terakhir |
 | 06 · MENUNGGU 05 | Hi-Ve App PWA, penjualan tunai offline dan antrean audit login. Entry 05 PASS dan kebijakan offline terkait direview | UAT-05–07, retry/restart, shortage, revoke/suspend/expiry, storage loss, hapus antrean hanya setelah ACK persistensi. Operasi inventori sensitif hanya online | Selesaikan OPEN-001/007/008/013 untuk skenario terdampak lalu uji di browser/perangkat |
@@ -414,6 +414,20 @@ DV3-PIN1–PIN4 **APPROVED** untuk online. Persetujuan menggunakan 029 sebagai b
 | Batas modul, kualitas dan dokumentasi | PASS | Guard import aktual dan build/race/vet/format lulus di CI. Locations memiliki outlet, Identity memiliki grant, Devices mengelola konteks dan Audit memiliki event. Kontrak domain, runbook retensi dan pembatasan deployment tercatat dalam dokumentasi backend. |
 
 Risiko tersisa mengikuti 02.35. B2 S3-G menunggu key dan consumer pertama. B3 producer HPP/biaya, Sales dan ekspor mengikuti Phase 03–05/07, UAT penuh Phase 08. B4 outlet switching, antrean offline dan recovery mengikuti Phase 06. Validasi legal, role/privilege, backup/restore, kapasitas indeks, browser, SMTP, OIDC dan ingress target mengikuti Security/Ops dan OPEN-015. Aktivasi retensi pada target tetap memerlukan persetujuan terpisah.
+
+## Phase 03 · Catalog dan Locations
+
+Entry lulus pada merge PR #3 ke main. Branch `feat/phase-03-catalog` dibuat dari `96c930f`. Target pengujian PostgreSQL disposable. Compose development maksimal 028. PRD, scope P0 dan OPEN-002/003/014 tetap berlaku.
+
+| Increment dan FR/AC | Implementasi, bukti dan dependency |
+|---|---|
+| 03.1 · FR-PRD-02/AC-01–04 | `50cff0d` menambah satuan pcs, g/kg dan mL/L. PostgreSQL numeric menghitung konversi tepat dalam dua arah serta menolak lintas dimensi. Seluruh 25 pasangan diuji, termasuk round-trip pecahan kecil dan integer di atas presisi binary float. Batas skala numeric diperiksa lagi pada 03.3. **PASS** konversi Catalog. Pengurangan stok menunggu Phase 04. [CI Units](https://github.com/PTKPP/hi-ve/actions/runs/44723112454) |
+| 03.2 · FR-PRD-01/AC-01–04, FR-PRD-04/AC-05 | `9a4d7f0` menambah produk, kategori sebagai label, varian SKU, barcode unik per tenant, unit, konfigurasi tracking dan status. **PASS** multi-SKU, isolasi dua tenant, replay konkuren, baca historis dan penolakan SKU nonaktif untuk operasi baru. Inventory 04 memiliki lot dan lineage (FR-PRD-04/AC-01–04). Sales 05 membuktikan snapshot transaksi lama. [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44724188852) · [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44724196822) |
+| 03.2 · FR-PRD-03/AC-01–05 | **PASS pada domain dan fixture berizin** untuk harga dasar, override outlet, versi lama immutable, konflik revisi, dan respons kasir empat field. Kasir memakai sesi dan outlet dari Devices serta grant lokasi live dari Identity. **BLOCKED untuk aktivasi API pricing** pada pemetaan grant Platform. Tes dengan allowlist aktual menghasilkan 403. Snapshot diskon/transaksi di 05, cache berizin dan update offline di 06, proyeksi biaya/ekspor di 07. |
+| 03.2–03.3 · FR-LOC-01/AC-01–04 dan FR-LOC-02 | **PASS** mapping utama yang stabil, backfill lokasi existing, guard tenant/tipe/status, penolakan gudang sebagai outlet kasir, histori revisi dan akses setelah reaktivasi. Deactivation mengakhiri sesi outlet secara atomik. Saldo terpisah serta eksekusi izin sumber/tujuan pada receiving/transfer mengikuti Inventory 04. [Kontrak consumer](backend/docs/CATALOG_LOCATIONS.md) |
+| 03.3 · otorisasi dan kompatibilitas | `2c0d080089702b91df2ad5d1678e641cb524a8aa`. Owner memakai sesi Google tenant. Operator pengelola SKU memerlukan grant tenant-wide, entitlement aktif, konteks/perangkat sah, dan proof atas method/path/key/body. Tes menolak body yang berubah, replay proof, grant dicabut dan entitlement absen. Retry sah mengembalikan receipt. Schema 036→042 mempertahankan outlet dan mengisi mapping. Fresh/retry, rehearsal M5 lintas binary, build, race, vet, format, guard dan preflight 028 lulus lokal. Kedua CI pada commit implementasi ini **PASS**. [CI push](https://github.com/PTKPP/hi-ve/actions/runs/44725078885) · [CI PR](https://github.com/PTKPP/hi-ve/actions/runs/44725086135) |
+
+**Next action.** Putuskan apakah pengelolaan dan pembacaan harga jual menggunakan grant tersendiri `catalog.pricing` atau termasuk `catalog.products`. Allowlist tetap sesuai Issue #5 sampai ada keputusan. Setelah itu jalankan alur grant/expiry/revoke pricing melalui Platform dan buktikan API kasir pada konfigurasi tersebut. Acceptance transaksi Inventory/Sales, sinkronisasi Offline dan Reports tetap mengikuti phase pemilik. Draft PR #10 menunggu review.
 
 ## Riwayat checkpoint
 
