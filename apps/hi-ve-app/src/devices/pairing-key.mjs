@@ -36,6 +36,10 @@ export async function pairingKey() {
     proof({ pairing_id, nonce, expires_at }, idempotency_key) {
       return sign({ purpose: "hive.device.pair.redeem.v1", pairing_id, nonce, expires_at, idempotency_key });
     },
+    challengeProof({ tenant_id, device_id, operation, context_id, expected_revision }) {
+      return sign({ purpose: "hive.device.challenge.bootstrap.v1", tenant_id, device_id, operation,
+        context_id, expected_revision, request_id: crypto.randomUUID(), issued_at: new Date().toISOString() });
+    },
     operationProof({ challenge_id, nonce, device_revision, expires_at }, { tenant_id, device_id, operation, context_id, expected_revision }) {
       return sign({ purpose: "hive.device.operation.v1", challenge_id, nonce, device_revision, expires_at,
         tenant_id, device_id, operation, context_id, expected_revision });

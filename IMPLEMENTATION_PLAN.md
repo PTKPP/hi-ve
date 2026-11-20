@@ -273,6 +273,16 @@ Audit Draft PR #3 pada baseline `6f856fb491f60e7bcb9eb2d7ab17c54292588753`. GitH
 | Production Proxmox | **Topologi APPROVED, target NOT VERIFIED.** Container backend di VM aplikasi, PostgreSQL native di VM DB, private network, firewall allowlist, TLS `verify-full`, role app/migrator terpisah dan job migrasi terkontrol. Masih perlu bukti firewall/TLS, runtime privileges, backup/PITR/restore, readiness, rollback dan integrasi OPEN-015 pada target. Tidak ada deployment atau akses VM production. [Desain production](backend/docs/DEPLOYMENT.md) |
 | Gate lokal | **PASS.** Build, vet, race, format, architecture guard, actionlint dan PostgreSQL disposable 001–027, termasuk upgrade konkuren, retry dan rollback DDL. Smoke Compose memakai project sementara, membuktikan migrasi/retry dengan override host yang diabaikan, volume bertahan setelah down/up, serta backup/restore ke DB kosong. Unit systemd lulus verifikasi statis. Startup API via systemd dan integrasi Google/SMTP belum diuji dengan konfigurasi development aktual. |
 
+## Increment 02.22 · Perbaikan bootstrap challenge DV2
+
+Baseline Draft PR #3 `2add85f217db85cff2f790523462a1f9aeb26578` dengan CI push dan pull request PASS. Perbaikan terbatas pada penerbitan challenge operasional. Pairing awal DV1 tetap memakai kontrak dan kuotanya sendiri.
+
+| Gate | Hasil |
+|---|---|
+| Bukti perangkat sebelum kuota/row lock | **TERVERIFIKASI lokal.** Header `Device-Proof` membawa JWS ES256 dari key P-256 perangkat terdaftar, dengan purpose bootstrap, request ID, waktu penerbitan dan scope. Lookup key tanpa row lock dilakukan sebelum transaksi penerbitan. Replay yang masih berjalan ditolak tanpa menunggu lock perangkat. Receipt replay dibatasi umur request. |
+| Konkurensi dan kompatibilitas | **TERVERIFIKASI lokal.** PostgreSQL disposable menguji burst paralel selama lock perangkat ditahan, caller tanpa key, kuota peer dan perangkat yang tetap sama, replay, otorisasi perangkat sah, rate limit, expiry, dan perubahan revision konkuren. Migrasi aditif 028 menjaga sesi lama pada upgrade dari 027. Browser memakai helper `challengeProof` baru. Validasi browser target tetap OPEN-015. |
+| Regresi dan gate merge | **PASS lokal** untuk build, vet, race, architecture guard, actionlint dan suite PostgreSQL disposable termasuk Pairing, RBAC, LocationGrants, Membership, Logout dan OperationalContext. Temuan starvation DV2 ditangani pada lingkup ini. Phase 02 masih IN PROGRESS. DV3 dan sesi operator nyata, outlet switching OPEN-013, S3-G/S3-A, dan acceptance hak per field tetap menjadi pekerjaan merge. Gate production Proxmox tetap terpisah. [Audit merge](backend/docs/PHASE_02_MERGE_REVIEW.md) · [Issue #8](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7029452079) · [Pemeriksaan HEAD Draft PR #3](https://github.com/PTKPP/hi-ve/pull/3/checks) |
+
 ## Riwayat checkpoint
 
 | ID | Hasil dan kelanjutan |
@@ -305,3 +315,4 @@ Audit Draft PR #3 pada baseline `6f856fb491f60e7bcb9eb2d7ab17c54292588753`. GitH
 | 02.16 | Issue #6/#8/#9 diperbarui dalam bahasa Indonesia dan tetap OPEN. Review M5, LR, DV2 dan S3-T dicatat. Perubahan hanya pada tracker dan catatan Issue. |
 | 02.17–02.20 | LR1–LR4, fondasi DV2 online, pengaman M5 sebelum Contract dan S3-T dipush sebagai empat commit. PostgreSQL disposable dan kedua workflow untuk setiap increment lulus. Issue #6/#8/#9 tetap OPEN untuk scope yang tersisa. |
 | 02.21 | Audit merge menyisakan gate Phase 02 dan temuan challenge DV2. Konfigurasi development lokal teruji. Desain Proxmox tersedia, dengan gate deployment dan status target tetap terpisah. |
+| 02.22 | Bootstrap challenge DV2 mensyaratkan proof perangkat sebelum kuota/lock. Verifikasi disposable dan audit gate merge diperbarui. Draft PR #3 dan Issue #8 tetap OPEN untuk scope tersisa. |

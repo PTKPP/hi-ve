@@ -176,26 +176,88 @@ type operationClaims struct {
 	OperationTarget
 }
 
-func (s Service) StartOperation(ctx context.Context, tenant, device string, peer netip.Addr, target OperationTarget) (OperationChallenge, error) {
+type bootstrapClaims struct {
+	Purpose   string    `json:"purpose"`
+	Tenant    string    `json:"tenant_id"`
+	Device    string    `json:"device_id"`
+	RequestID string    `json:"request_id"`
+	IssuedAt  time.Time `json:"issued_at"`
+	OperationTarget
+}
+
+const bootstrapLifetime = 30 * time.Second
+
+func (s Service) StartOperation(ctx context.Context, tenant, device string, peer netip.Addr, target OperationTarget, proof string) (OperationChallenge, error) {
 	var result OperationChallenge
 	valid := target.Operation == "state" && target.ContextID == "" && target.Revision == nil ||
 		(target.Operation == "context.read" || target.Operation == "context.logout") && outletID.MatchString(target.ContextID) && target.Revision != nil && *target.Revision > 0
 	if !valid || !peer.IsValid() {
 		return result, ErrInput
 	}
+	if proof == "" || len(proof) > 2048 {
+		return result, ErrProof
+	}
+	// An MVCC lookup takes no device row lock. Unproven requests never start a
+	// transaction that locks the device or touches either issuance quota.
+	var public PublicKey
+	var verifiedRevision int64
+	err := s.DB.QueryRow(ctx, `SELECT d.public_key,d.revision FROM hive.devices d
+		JOIN hive.active_tenants t ON t.id=d.tenant_id
+		WHERE d.tenant_id=$1 AND d.id=$2 AND d.revoked_at IS NULL`, tenant, device).Scan(&public, &verifiedRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, ErrProof
+	}
+	if err != nil {
+		return result, err
+	}
+	var claims bootstrapClaims
+	if json.Unmarshal(signedPayload(public, proof), &claims) != nil ||
+		claims.Purpose != "hive.device.challenge.bootstrap.v1" || claims.Tenant != tenant || claims.Device != device ||
+		!outletID.MatchString(claims.RequestID) || claims.IssuedAt.IsZero() ||
+		claims.Operation != target.Operation || claims.ContextID != target.ContextID || !sameRevision(claims.Revision, target.Revision) {
+		return result, ErrProof
+	}
+
 	random := make([]byte, 24)
 	if _, err := rand.Read(random); err != nil {
 		return result, err
 	}
 	result.Nonce = base64.RawURLEncoding.EncodeToString(random)
-	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT d.revision FROM hive.devices d JOIN hive.active_tenants t ON t.id=d.tenant_id
-			WHERE d.tenant_id=$1 AND d.id=$2 AND d.revoked_at IS NULL FOR NO KEY UPDATE OF d FOR SHARE OF t`, tenant, device).Scan(&result.DeviceRevision)
+	bootstrapExpiresAt := claims.IssuedAt.Add(bootstrapLifetime)
+	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		// The signed request ID is the replay identity, independent of the
+		// encoding or malleability of the signature. Replays never reach the device lock.
+		var first bool
+		err := tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))`,
+			"device-bootstrap:"+tenant+":"+device+":"+claims.RequestID).Scan(&first)
+		if err != nil {
+			return err
+		}
+		if !first {
+			return ErrProof
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO hive.device_bootstrap_receipts(tenant_id,device_id,request_id,expires_at)
+			SELECT $1,$2,$3,$5::timestamptz
+			WHERE $4::timestamptz<=clock_timestamp()+interval '5 seconds'
+			  AND $5::timestamptz>clock_timestamp()
+			ON CONFLICT DO NOTHING`, tenant, device, claims.RequestID, claims.IssuedAt, bootstrapExpiresAt)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrProof
+		}
+		var currentKey PublicKey
+		err = tx.QueryRow(ctx, `SELECT d.public_key,d.revision FROM hive.devices d JOIN hive.active_tenants t ON t.id=d.tenant_id
+			WHERE d.tenant_id=$1 AND d.id=$2 AND d.revoked_at IS NULL FOR NO KEY UPDATE OF d FOR SHARE OF t`, tenant, device).Scan(&currentKey, &result.DeviceRevision)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrUnavailable
+			return ErrProof
 		}
 		if err != nil {
 			return err
+		}
+		if currentKey != public || result.DeviceRevision != verifiedRevision {
+			return ErrProof
 		}
 		if err = takeStartLimit(ctx, tx, "operation_peer", keyed(s.RateKey, "operation-peer", peer.Unmap().WithZone("").String()), "1 minute", 600); err != nil {
 			return err
@@ -213,11 +275,20 @@ func (s Service) StartOperation(ctx context.Context, tenant, device string, peer
 			return ErrLimited
 		}
 		err = tx.QueryRow(ctx, `INSERT INTO hive.device_operation_challenges(tenant_id,device_id,nonce,device_revision,operation,context_id,context_revision)
-			VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7) RETURNING id,expires_at`, tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.ContextID, target.Revision).Scan(&result.ID, &result.ExpiresAt)
+			SELECT $1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7
+			WHERE $8::timestamptz>clock_timestamp() RETURNING id,expires_at`,
+			tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.ContextID, target.Revision, bootstrapExpiresAt).Scan(&result.ID, &result.ExpiresAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrProof
+		}
 		return err
 	})
 	result.ExpiresAt = result.ExpiresAt.UTC()
 	return result, err
+}
+
+func sameRevision(a, b *int64) bool {
+	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
 type OperationalState struct {

@@ -450,5 +450,13 @@ func (s Service) Cleanup(ctx context.Context) error {
 		ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED
 	) DELETE FROM hive.device_operation_challenges c USING expired e
 	WHERE (c.tenant_id,c.device_id,c.id)=(e.tenant_id,e.device_id,e.id)`)
+	if err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(ctx, `WITH expired AS (
+		SELECT tenant_id,device_id,request_id FROM hive.device_bootstrap_receipts WHERE expires_at<=statement_timestamp()
+		ORDER BY expires_at LIMIT 500 FOR UPDATE SKIP LOCKED
+	) DELETE FROM hive.device_bootstrap_receipts r USING expired e
+	WHERE (r.tenant_id,r.device_id,r.request_id)=(e.tenant_id,e.device_id,e.request_id)`)
 	return err
 }

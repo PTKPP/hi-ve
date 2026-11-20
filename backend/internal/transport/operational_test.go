@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
@@ -60,35 +62,149 @@ func TestOperationalContextPostgres(t *testing.T) {
 	expectStatus(t, accessRequest(h, "PUT", assign, appOrigin, receipt, body, owner), 200)
 	expectStatus(t, accessRequest(h, "PUT", assign, appOrigin, "different-operators-test", body, owner), 409)
 
+	sign := func(payload any, signer *ecdsa.PrivateKey) string {
+		encoded, _ := json.Marshal(payload)
+		content := "eyJhbGciOiJFUzI1NiJ9." + encode(encoded)
+		sum := sha256.Sum256([]byte(content))
+		r, s, err := ecdsa.Sign(rand.Reader, signer, sum[:])
+		if err != nil {
+			t.Error(err)
+			return ""
+		}
+		sig := make([]byte, 64)
+		r.FillBytes(sig[:32])
+		s.FillBytes(sig[32:])
+		return content + "." + encode(sig)
+	}
+	start := func(target devices.OperationTarget, proof string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(target)
+		requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		req := httptest.NewRequestWithContext(requestCtx, "POST", base+"/challenges", bytes.NewReader(body))
+		req.Header.Set("Origin", appOrigin)
+		req.Header.Set("Device-Proof", proof)
+		result := httptest.NewRecorder()
+		h.ServeHTTP(result, req)
+		return result
+	}
+	type bootstrap struct {
+		devices.OperationTarget
+		Purpose  string    `json:"purpose"`
+		Tenant   string    `json:"tenant_id"`
+		Device   string    `json:"device_id"`
+		Request  string    `json:"request_id"`
+		IssuedAt time.Time `json:"issued_at"`
+	}
+	newBootstrap := func(target devices.OperationTarget) bootstrap {
+		t.Helper()
+		var id string
+		row(&id, `SELECT gen_random_uuid()`)
+		return bootstrap{target, "hive.device.challenge.bootstrap.v1", tenant, device, id, time.Now()}
+	}
 	challenge := func(operation, id string, revision int64) string {
 		t.Helper()
 		input := devices.OperationTarget{Operation: operation, ContextID: id}
 		if id != "" {
 			input.Revision = &revision
 		}
-		response := accessRequest(h, "POST", base+"/challenges", appOrigin, "", input)
+		response := start(input, sign(newBootstrap(input), private))
 		expectStatus(t, response, 201)
 		var c devices.OperationChallenge
 		if err := json.Unmarshal(response.Body.Bytes(), &c); err != nil {
 			t.Fatal(err)
 		}
-		payload, _ := json.Marshal(struct {
+		return sign(struct {
 			devices.OperationChallenge
 			devices.OperationTarget
 			Purpose string `json:"purpose"`
 			Tenant  string `json:"tenant_id"`
 			Device  string `json:"device_id"`
-		}{c, input, "hive.device.operation.v1", tenant, device})
-		content := "eyJhbGciOiJFUzI1NiJ9." + encode(payload)
-		sum := sha256.Sum256([]byte(content))
-		r, s, err := ecdsa.Sign(rand.Reader, private, sum[:])
-		if err != nil {
-			t.Fatal(err)
+		}{c, input, "hive.device.operation.v1", tenant, device}, private)
+	}
+
+	stateTarget := devices.OperationTarget{Operation: "state"}
+	replayClaims := newBootstrap(stateTarget)
+	replayProof := sign(replayClaims, private)
+	race := make(chan int, 2)
+	for range 2 {
+		go func() { race <- start(stateTarget, replayProof).Code }()
+	}
+	first, second := <-race, <-race
+	if first == second || first+second != 602 {
+		t.Fatalf("bootstrap replay race: %d %d", first, second)
+	}
+
+	stale := newBootstrap(stateTarget)
+	stale.IssuedAt = stale.IssuedAt.Add(-time.Minute)
+	expectStatus(t, start(stateTarget, sign(stale, private)), 401)
+	future := newBootstrap(stateTarget)
+	future.IssuedAt = future.IssuedAt.Add(time.Minute)
+	expectStatus(t, start(stateTarget, sign(future, private)), 401)
+	foreignScope := newBootstrap(stateTarget)
+	foreignScope.Tenant = member
+	expectStatus(t, start(stateTarget, sign(foreignScope, private)), 401)
+	revisionOne := int64(1)
+	contextTarget := devices.OperationTarget{Operation: "context.logout", ContextID: member, Revision: &revisionOne}
+	expectStatus(t, start(contextTarget, sign(newBootstrap(stateTarget), private)), 401)
+	wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badProof := sign(newBootstrap(stateTarget), wrongKey)
+
+	// Requests without a valid key, and already-used signed requests, must
+	// finish while another transaction still holds the device row lock.
+	blocker, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(ctx)
+	if _, err = blocker.Exec(ctx, `SELECT id FROM hive.devices WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenant, device); err != nil {
+		t.Fatal(err)
+	}
+	const callers = 48
+	burst := make(chan int, callers)
+	usedProofs := []string{"", badProof, sign(replayClaims, private)}
+	for i := range callers {
+		proof := usedProofs[i%len(usedProofs)]
+		go func() { burst <- start(stateTarget, proof).Code }()
+	}
+	for range callers {
+		if status := <-burst; status != 401 {
+			t.Fatalf("unauthorized issuer waited for the device lock or was accepted: %d", status)
 		}
-		sig := make([]byte, 64)
-		r.FillBytes(sig[:32])
-		s.FillBytes(sig[32:])
-		return content + "." + encode(sig)
+	}
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var receipts, challenges, attempts, peerAttempts int
+	if err = db.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM hive.device_bootstrap_receipts WHERE tenant_id=$1 AND device_id=$2),
+		(SELECT count(*) FROM hive.device_operation_challenges WHERE tenant_id=$1 AND device_id=$2),
+		(SELECT COALESCE(sum(cardinality(attempts)),0) FROM hive.device_pairing_limits WHERE scope='operation_device'),
+		(SELECT COALESCE(sum(cardinality(attempts)),0) FROM hive.device_pairing_limits WHERE scope='operation_peer')`, tenant, device).
+		Scan(&receipts, &challenges, &attempts, &peerAttempts); err != nil || receipts != 1 || challenges != 1 || attempts != 1 || peerAttempts != 1 {
+		t.Fatalf("unauthorized issuance changed receipts, slots or quotas: %d/%d/%d/%d (%v)", receipts, challenges, attempts, peerAttempts, err)
+	}
+	// Even an in-flight copy of a valid proof must return while the first
+	// issuance waits on a legitimate device mutation.
+	held, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback(ctx)
+	if _, err = held.Exec(ctx, `SELECT id FROM hive.devices WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenant, device); err != nil {
+		t.Fatal(err)
+	}
+	inflight := sign(newBootstrap(stateTarget), private)
+	go func() { race <- start(stateTarget, inflight).Code }()
+	waitForBlocked(t, db, held.Conn().PgConn().PID())
+	expectStatus(t, start(stateTarget, inflight), 401)
+	if err = held.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status := <-race; status != 201 {
+		t.Fatalf("valid device issuance after lock: %d", status)
 	}
 	use := func(method, path, proof, token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, base+path, nil)
@@ -148,6 +264,30 @@ func TestOperationalContextPostgres(t *testing.T) {
 	expectStatus(t, use("GET", "/context", challenge("context.read", current, 2), "new-operator"), 200)
 	expectStatus(t, accessRequest(h, "POST", base+"/context", appOrigin, "", map[string]string{"pin": "000000"}), 405)
 	expectStatus(t, accessRequest(h, "PUT", base+"/context/outlet", appOrigin, "", nil), 405)
+	exec(`UPDATE hive.device_pairing_limits SET attempts=array_fill(clock_timestamp(),ARRAY[120]) WHERE scope='operation_device'`)
+	throttledProof := sign(newBootstrap(stateTarget), private)
+	expectStatus(t, start(stateTarget, throttledProof), 429)
+	exec(`UPDATE hive.device_pairing_limits SET attempts=ARRAY[]::timestamptz[] WHERE scope='operation_device'`)
+	expectStatus(t, start(stateTarget, throttledProof), 201)
+	previousRevisionProof := challenge("state", "", 0)
+	replaceRevision, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replaceRevision.Rollback(ctx)
+	if _, err = replaceRevision.Exec(ctx, `UPDATE hive.devices SET revision=revision+1 WHERE tenant_id=$1 AND id=$2`, tenant, device); err != nil {
+		t.Fatal(err)
+	}
+	beforeRevisionChange := sign(newBootstrap(stateTarget), private)
+	go func() { race <- start(stateTarget, beforeRevisionChange).Code }()
+	waitForBlocked(t, db, replaceRevision.Conn().PgConn().PID())
+	if err = replaceRevision.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if status := <-race; status != 401 {
+		t.Fatalf("issuance accepted a concurrent device revision change: %d", status)
+	}
+	expectStatus(t, use("GET", "/state", previousRevisionProof, ""), 401)
 	pending := challenge("state", "", 0)
 	expectStatus(t, accessRequest(h, "POST", "/api/v1/app/tenants/"+tenant+"/members/"+member+"/deactivate", appOrigin,
 		"remove-operator-access", map[string]any{"revision": 0, "reason_code": "administrative_action"}, owner), 200)
@@ -157,6 +297,6 @@ func TestOperationalContextPostgres(t *testing.T) {
 		t.Fatalf("deactivation retained device access: %d/%v", count, err)
 	}
 	expectStatus(t, accessRequest(h, "POST", "/api/v1/app/tenants/"+tenant+"/devices/"+device+"/revoke", appOrigin,
-		"revoke-operational-device", map[string]int{"expected_revision": 2}, owner), 200)
+		"revoke-operational-device", map[string]int{"expected_revision": 3}, owner), 200)
 	expectStatus(t, use("GET", "/state", pending, ""), 401)
 }

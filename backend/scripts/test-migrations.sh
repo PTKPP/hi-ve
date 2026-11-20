@@ -266,11 +266,18 @@ sql hive_online_upgrade "BEGIN;
     ROLLBACK"
 printf 'PASS: Owner Google backfill, mixed-version writers, validated constraints and rollback boundaries\n'
 
-migrate hive_online_upgrade migrations
-expect_sql hive_online_upgrade "$version" "$latest"
+cp migrations/0{26..27}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 27
 expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.tenant_receipt_settings' 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
 printf 'PASS: receipt settings upgrade preserves existing Owner sessions and starts without overrides\n'
+
+migrate hive_online_upgrade migrations
+expect_sql hive_online_upgrade "$version" "$latest"
+expect_sql hive_online_upgrade 'SELECT count(*) FROM hive.device_bootstrap_receipts' 0
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
+printf 'PASS: upgrade 027 to device bootstrap preserves existing sessions\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \

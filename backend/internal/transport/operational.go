@@ -32,7 +32,7 @@ func (a API) operationChallenge(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &target) {
 		return
 	}
-	result, err := a.Devices.StartOperation(r.Context(), tenant, device, peer, target)
+	result, err := a.Devices.StartOperation(r.Context(), tenant, device, peer, target, r.Header.Get("Device-Proof"))
 	if err != nil {
 		deviceError(w, err)
 		return
