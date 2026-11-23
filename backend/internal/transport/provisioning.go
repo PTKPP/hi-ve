@@ -26,6 +26,8 @@ import (
 	"hi-ve/backend/internal/offline"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
+	"hi-ve/backend/internal/realtime"
+	"hi-ve/backend/internal/reports"
 	"hi-ve/backend/internal/settings"
 )
 
@@ -47,6 +49,10 @@ type Google interface {
 }
 
 type API struct {
+	Global                 settings.Global
+	PushSchema             bool
+	Realtime               realtime.Service
+	Reports                reports.Service
 	Offline                offline.Service
 	SalesDB                *pgxpool.Pool
 	InventoryDB            *pgxpool.Pool
@@ -77,6 +83,11 @@ func (a API) Handler() http.Handler {
 	a.catalogRoutes(mux)
 	a.inventoryRoutes(mux)
 	a.salesRoutes(mux)
+	a.reportsRoutes(mux)
+	a.directoryRoutes(mux)
+	a.controlsRoutes(mux)
+	a.pushRoutes(mux)
+	a.realtimeRoutes(mux)
 	a.offlineRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
@@ -113,7 +124,7 @@ func (a API) origin(want string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", want)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, Device-Proof")
 		next(w, r)
 	}

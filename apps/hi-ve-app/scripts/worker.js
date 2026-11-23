@@ -30,3 +30,19 @@ self.addEventListener("fetch", event => {
     return await cache.match(path) ?? fetch(request);
   })());
 });
+
+self.addEventListener("push", event => {
+  if(!event.data) return;
+  let data;
+  try { data=event.data.json(); } catch { return; }
+  if(data.type!=="sale.received"||typeof data.id!=="string"||!/^[-:0-9a-f]{1,80}$/.test(data.id)) return;
+  event.waitUntil((async()=>{
+    const tag="hi-ve-sale-"+data.id;
+    if((await self.registration.getNotifications({tag})).length) return;
+    await self.registration.showNotification("Hi-Ve", {body:"Penjualan baru diterima server.",tag,renotify:false});
+  })());
+});
+self.addEventListener("notificationclick",event=>{
+  event.notification.close();
+  event.waitUntil(self.clients.openWindow("/"));
+});

@@ -39,6 +39,7 @@ type Service struct {
 	DB                 *pgxpool.Pool
 	PIN                *identity.PIN
 	PINContextSchema   bool
+	TenantEpochSchema  bool
 	CodeKey            []byte
 	PreviousCodeKey    []byte
 	RateKey            []byte
@@ -345,6 +346,17 @@ func (s Service) Redeem(ctx context.Context, id, key, proof string) (Device, err
 		}
 		if !valid {
 			return ErrUnavailable
+		}
+		if s.TenantEpochSchema {
+			var current bool
+			err = tx.QueryRow(ctx, `SELECT COALESCE(p.approval_tenant_epoch=t.authorization_epoch,false)
+				FROM hive.device_pairings p JOIN hive.tenants t ON t.id=p.tenant_id WHERE p.id=$1`, id).Scan(&current)
+			if err != nil {
+				return err
+			}
+			if !current {
+				return ErrUnavailable
+			}
 		}
 		err = tx.QueryRow(ctx, `INSERT INTO hive.devices (tenant_id,pairing_id,public_key,thumbprint)
 			VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id,revision`, p.tenant, id, p.public, p.thumb).

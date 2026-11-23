@@ -27,6 +27,8 @@ import (
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
+	"hi-ve/backend/internal/realtime"
+	"hi-ve/backend/internal/reports"
 	"hi-ve/backend/internal/settings"
 	"hi-ve/backend/internal/transport"
 )
@@ -85,6 +87,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	deviceService.PINContextSchema = version >= 35
+	deviceService.TenantEpochSchema = version >= 55
 	if deviceService.PINContextSchema {
 		deviceService.PIN = staffPIN
 	}
@@ -106,6 +109,19 @@ func run(ctx context.Context) error {
 	if version >= 49 {
 		api.SalesDB = db
 	}
+	if version >= 51 {
+		api.Reports = reports.Service{DB: db, Entitlements: api.Entitlements}
+	}
+	if version >= 52 {
+		api.Realtime = realtime.Service{DB: db, Entitlements: api.Entitlements}
+	}
+	if version >= 53 {
+		api.Global = settings.Global{DB: db}
+	}
+	if version >= 54 {
+		api.PushSchema = true
+		api.Realtime.Push = realtime.PushConfig{Public: os.Getenv("HIVE_WEB_PUSH_VAPID_PUBLIC_KEY"), Private: os.Getenv("HIVE_WEB_PUSH_VAPID_PRIVATE_KEY"), Subject: os.Getenv("HIVE_WEB_PUSH_VAPID_SUBJECT")}
+	}
 	// Offline routes are wired only by disposable test fixtures until the Phase 08 rollout gate passes.
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
@@ -113,7 +129,11 @@ func run(ctx context.Context) error {
 	}
 	handler := api.Handler()
 	server := &http.Server{Addr: address, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		request, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		timeout := 20 * time.Second
+		if r.Header.Get("Upgrade") == "websocket" && strings.HasSuffix(r.URL.Path, "/realtime/socket") {
+			timeout = 10 * time.Minute
+		}
+		request, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		handler.ServeHTTP(w, r.WithContext(request))
 	}), ReadHeaderTimeout: 5 * time.Second,
@@ -153,6 +173,33 @@ func run(ctx context.Context) error {
 			}
 		}
 	}()
+	if api.PushSchema && api.Realtime.Push.Configured() {
+		pushDone := make(chan struct{})
+		go func() {
+			defer close(pushDone)
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-cleanupCtx.Done():
+					return
+				case <-ticker.C:
+					for range 8 {
+						work, stop := context.WithTimeout(cleanupCtx, 6*time.Second)
+						more, err := api.Realtime.DeliverPush(work)
+						stop()
+						if err != nil && cleanupCtx.Err() == nil {
+							slog.Warn("web push delivery attempt failed")
+						}
+						if !more || cleanupCtx.Err() != nil {
+							break
+						}
+					}
+				}
+			}
+		}()
+		defer func() { stopCleanup(); <-pushDone }()
+	}
 	defer func() {
 		stopCleanup()
 		<-cleanupDone

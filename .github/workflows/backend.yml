@@ -71,5 +71,6 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - run: node ../scripts/build-static.mjs
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:browser

@@ -60,7 +60,8 @@ func grantable(capability string) bool {
 	switch capability {
 	case "catalog.products", "catalog.pricing", "inventory.receiving", "inventory.repacking",
 		"inventory.transfer", "inventory.adjustment", "inventory.stock_count", "inventory.balance", "inventory.traceability",
-		"sales.cashier", "sales.transactions", "sales.payments", "sales.history", "sales.receipts", "sales.returns", "sales.voids":
+		"sales.cashier", "sales.transactions", "sales.payments", "sales.history", "sales.receipts", "sales.returns", "sales.voids",
+		"reports.dashboard", "reports.sales", "reports.inventory", "reports.stock_movements", "realtime.events", "realtime.notifications":
 		return platform.IsPilotCapability(capability)
 	default:
 		return false

@@ -340,11 +340,87 @@ expect_sql hive_online_upgrade "$version" 47
 cp migrations/0{48..49}_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 49
-migrate hive_online_upgrade migrations
-expect_sql hive_online_upgrade "$version" "$latest"
+cp migrations/050_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 50
+cp migrations/0{51..52}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 52
+cp migrations/0{53..54}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 54
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.offline_leases" 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
-printf 'PASS: upgrade 049 to offline journals preserves existing Owner sessions\n'
+expect_sql hive_online_upgrade "SELECT enabled::text FROM hive.global_boolean_settings WHERE key='notifications.web_push_enabled'" false
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.web_push_subscriptions" 0
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.realtime_events" 0
+printf 'PASS: upgrade 049 through reports and realtime preserves existing Owner sessions\n'
+
+legacy_pairing=$(printf '%048d' 55)
+new_pairing=$(printf '%048d' 56)
+sql hive_online_upgrade "WITH member AS (
+    SELECT tenant_id,principal_id FROM hive.tenant_memberships WHERE active AND role='primary_owner' ORDER BY tenant_id LIMIT 1
+) INSERT INTO hive.device_pairings(id,public_key,thumbprint,start_key,code_key_id,nonce,tenant_id,actor_id,approval_key,approval_fingerprint)
+  SELECT '$legacy_pairing','{}',sha256('legacy'::bytea),'fixture','fixture','fixture',tenant_id,principal_id,'fixture',sha256('approved'::bytea)
+  FROM member"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.device_pairings WHERE id='$legacy_pairing'" 1
+
+sql hive_online_upgrade "SET application_name='fixture_phase07_lock'; BEGIN; LOCK TABLE hive.device_pairings IN ACCESS SHARE MODE; SELECT pg_sleep(8); COMMIT" >"$scratch/055-lock-holder.log" &
+lock_holder=$!
+for ((attempt = 0; attempt < 100; attempt++)); do
+    if [[ $(sql hive_online_upgrade "SELECT count(*) FROM pg_stat_activity WHERE application_name='fixture_phase07_lock' AND wait_event='PgSleep'") == 1 ]]; then
+        break
+    fi
+    sleep 0.05
+done
+if migrate hive_online_upgrade migrations >"$scratch/055-lock-timeout.log" 2>&1; then
+    printf 'Expected migration 055 to fail on its lock timeout\n' >&2
+    exit 1
+fi
+[[ $(<"$scratch/055-lock-timeout.log") == *"lock timeout"* ]]
+wait "$lock_holder"
+expect_sql hive_online_upgrade "$version" 54
+
+mkdir "$scratch/phase07_fault"
+cp migrations/*.sql "$scratch/phase07_fault/"
+printf '\nSELECT 1/0;\n' >> "$scratch/phase07_fault/055_device_pairing_authorization_epoch.sql"
+if migrate hive_online_upgrade "$scratch/phase07_fault" >"$scratch/055-rollback.log" 2>&1; then
+    printf 'Expected migration 055 fault to roll back DDL\n' >&2
+    exit 1
+fi
+[[ $(<"$scratch/055-rollback.log") == *"division by zero"* ]]
+expect_sql hive_online_upgrade "$version" 54
+expect_sql hive_online_upgrade "SELECT count(*) FROM information_schema.columns WHERE table_schema='hive' AND table_name='device_pairings' AND column_name='approval_tenant_epoch'" 0
+expect_sql hive_online_upgrade "SELECT to_regprocedure('hive.set_device_pairing_authorization_epoch()') IS NULL" t
+
+migrate hive_online_upgrade migrations >"$scratch/055-first.log" &
+first=$!
+migrate hive_online_upgrade migrations >"$scratch/055-second.log" &
+second=$!
+wait "$first"
+wait "$second"
+migrate hive_online_upgrade migrations
+expect_sql hive_online_upgrade "$version" "$latest"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.device_pairings WHERE id='$legacy_pairing' AND approval_tenant_epoch IS NULL" 1
+sql hive_online_upgrade "CREATE ROLE hive_phase07_legacy_pairing NOLOGIN;
+  GRANT USAGE ON SCHEMA hive TO hive_phase07_legacy_pairing;
+  GRANT SELECT,UPDATE ON hive.device_pairings TO hive_phase07_legacy_pairing;
+  GRANT SELECT,UPDATE(id) ON hive.tenants TO hive_phase07_legacy_pairing;
+  INSERT INTO hive.device_pairings(id,public_key,thumbprint,start_key,code_key_id,nonce)
+    VALUES ('$new_pairing','{}',sha256('current'::bytea),'fixture','fixture','fixture');
+  SET ROLE hive_phase07_legacy_pairing;
+  DO \$\$ BEGIN
+    BEGIN
+        UPDATE hive.device_pairings SET redeem_key='fixture',redeem_proof=sha256('proof'::bytea) WHERE id='$legacy_pairing';
+        RAISE EXCEPTION 'Pre-upgrade approval redeemed';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END \$\$;
+  UPDATE hive.device_pairings p SET tenant_id=legacy.tenant_id, actor_id=legacy.actor_id, approval_key='fixture',
+    approval_fingerprint=sha256('approved'::bytea) FROM hive.device_pairings legacy WHERE p.id='$new_pairing' AND legacy.id='$legacy_pairing';
+  UPDATE hive.device_pairings SET redeem_key='fixture',redeem_proof=sha256('proof'::bytea) WHERE id='$new_pairing'"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.device_pairings p JOIN hive.tenants t ON t.id=p.tenant_id WHERE p.id='$new_pairing' AND p.redeem_key IS NOT NULL AND p.approval_tenant_epoch=t.authorization_epoch" 1
+printf 'PASS: 054 to 055 lock timeout, DDL rollback, concurrent retry and compatible pairing writes\n'
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
     ON (n.tenant_id,n.location_id)=(l.tenant_id,l.id) WHERE l.code='existing' AND l.revision=0" 1
 printf 'PASS: upgrade from Phase 02 preserves outlet IDs and backfills their inventory mapping\n'
@@ -361,4 +437,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Reports|PlatformControls|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'

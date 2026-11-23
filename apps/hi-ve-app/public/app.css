@@ -53,3 +53,7 @@ button:disabled { opacity: .55; cursor: default; }
 .cart form, #persist, #history-more { margin-top: 10px; }
 @media (max-width: 720px) { .register { grid-template-columns: 1fr; } .status-strip { grid-template-columns: repeat(2, 1fr); } }
 @media print { body { background: white; } .topbar, .status-strip, #workspace, #setup, #login, #notice, #print, .receipt-actions { display: none !important; } #receipt { margin: 0; border: 0; padding: 0; } }
+.report-scroll { overflow-x: auto; margin-block: 1rem; }
+.report-scroll table { border-collapse: collapse; width: 100%; white-space: nowrap; text-align: left; }
+.report-scroll :is(td, th) { border-bottom: 1px solid #ccd8d0; padding: .5rem .7rem; }
+@media print { #owner-reports { display: none !important; } }

@@ -417,6 +417,37 @@ func TestProvisioningPostgres(t *testing.T) {
 		check(request("GET", appSession, appOrigin, "", nil, tenantSession), 200)
 	})
 
+	t.Run("browser tenant handoff revokes its previous session and push subscription", func(t *testing.T) {
+		otherID, actor, independent := ownerSessionFixture(t, db, "other-owner-rotation")
+		// The exact handoff cookie belongs to the first tenant, independent is
+		// a different sign-in that must keep working.
+		callback, browser := oidcStart(login, appOrigin, nil, "owner", "")
+		signedIn := request("GET", callback, "", "", nil, browser)
+		check(signedIn, 204)
+		prior := signedIn.Result().Cookies()[1]
+		exec(`INSERT INTO hive.web_push_subscriptions(endpoint,tenant_id,actor_id,session_digest,p256dh,auth,last_sequence,setting_revision,entitlement_revision)
+			SELECT 'https://fcm.googleapis.com/fcm/send/session-rotation-fixture',tenant_id,principal_id,digest,'fixture','fixture',0,0,0
+			FROM hive.tenant_sessions WHERE digest=$1`, identity.Digest(prior.Value))
+		var subject string
+		if err := db.QueryRow(t.Context(), `SELECT subject FROM hive.google_principals WHERE id=$1`, actor).Scan(&subject); err != nil {
+			t.Fatal(err)
+		}
+		movedLogin := "/api/v1/app/tenants/" + otherID + "/login"
+		callback, browser = oidcStart(movedLogin, appOrigin, nil, subject, "")
+		moved := request("GET", callback, "", "", nil, browser, prior, adminSession)
+		check(moved, 204)
+		sessionPath := "/api/v1/app/tenants/" + tenant + "/session"
+		check(request("GET", sessionPath, appOrigin, "", nil, prior), 401)
+		check(request("GET", sessionPath, appOrigin, "", nil, tenantSession), 200)
+		check(request("GET", "/api/v1/app/tenants/"+otherID+"/session", appOrigin, "", nil, moved.Result().Cookies()[1]), 200)
+		check(request("GET", "/api/v1/app/tenants/"+otherID+"/session", appOrigin, "", nil, independent), 200)
+		check(request("POST", create, adminOrigin, "first-create-key", input, adminSession), 201)
+		var subscriptions int
+		if err := db.QueryRow(t.Context(), `SELECT count(*) FROM hive.web_push_subscriptions WHERE session_digest=$1`, identity.Digest(prior.Value)).Scan(&subscriptions); err != nil || subscriptions != 0 {
+			t.Fatalf("old Push subscription: %d, %v", subscriptions, err)
+		}
+	})
+
 	t.Run("cleanup retains active sessions and audit history", func(t *testing.T) {
 		appSession := "/api/v1/app/tenants/" + tenant + "/session"
 		exec(`INSERT INTO hive.platform_sessions SELECT $1,principal_id,statement_timestamp()-interval '1 minute'

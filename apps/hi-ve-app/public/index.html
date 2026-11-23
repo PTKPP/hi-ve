@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/app.css">
   <script src="/assets/app.mjs" type="module"></script>
   <script src="/assets/owner-offline.mjs" type="module"></script>
+  <script src="/assets/owner-reports.mjs" type="module"></script>
 </head>
 <body>
   <header class="topbar">
@@ -20,7 +21,7 @@
     <section class="status-strip" aria-label="Status koneksi">
       <dl><dt>Jaringan</dt><dd id="network">Memeriksa</dd></dl>
       <dl><dt>API</dt><dd id="api">Belum diperiksa</dd></dl>
-      <dl><dt>WebSocket</dt><dd>Belum terhubung</dd></dl>
+      <dl><dt>WebSocket</dt><dd id="realtime-state">Belum terhubung</dd></dl>
       <dl><dt>Antrean</dt><dd id="sync-status">—</dd></dl>
     </section>
     <p id="notice" role="status" hidden></p>
@@ -89,6 +90,41 @@
         <button id="history-more" hidden>Halaman berikutnya</button>
       </section>
     </section>
+    <details class="panel below" id="owner-reports">
+      <summary>Dashboard dan laporan Owner</summary>
+      <form id="report-connect">
+        <label>Tenant laporan <input name="tenant" required autocomplete="off"></label>
+        <button>Muat akses laporan</button>
+        <button name="action" value="login">Masuk Google untuk laporan Owner</button>
+      </form>
+      <form id="owner-claim">
+        <label>Kode undangan Primary Owner <input name="invitation" type="password" required autocomplete="off"></label>
+        <button>Tautkan akun Google</button>
+      </form>
+      <p id="report-message" role="status"></p>
+      <form id="report-filter" hidden>
+        <label>Laporan <select name="kind"></select></label>
+        <label>Periode <select name="range"><option>Hari ini</option><option>Kemarin</option><option>Rentang tanggal</option></select></label>
+        <label>Zona waktu laporan <input name="timezone" value="UTC" required autocomplete="off"></label>
+        <label>Dari <input name="from" type="date" required></label>
+        <label>Sampai <input name="through" type="date" required></label>
+        <label>ID lokasi <input name="location" autocomplete="off"></label>
+        <label>ID SKU <input name="sku" autocomplete="off"></label>
+        <label>ID operator <input name="actor" autocomplete="off"></label>
+        <label>Jenis mutasi <input name="movement" list="report-movement-kinds"></label>
+        <datalist id="report-movement-kinds"><option value="receiving"><option value="repacking"><option value="transfer.dispatch"><option value="transfer.receipt"><option value="sale"></datalist>
+        <button>Muat laporan</button>
+        <button type="button" id="report-export" hidden>Unduh CSV halaman ini</button>
+        <button type="button" id="report-push" hidden>Aktifkan Web Push di browser ini</button>
+        <button type="button" id="report-push-off" hidden>Matikan Web Push di browser ini</button>
+        <button type="button" id="report-logout">Keluar sesi Owner</button>
+        <button type="button" id="report-preference" hidden>Aktifkan notifikasi di aplikasi</button>
+      </form>
+      <p id="report-notice" role="status"></p>
+      <div id="report-data"></div>
+      <button id="report-next" type="button" hidden>Halaman berikutnya</button>
+      <div id="report-detail"></div>
+    </details>
     <details class="panel below" id="owner-offline">
       <summary>Rekonsiliasi offline untuk Primary Owner</summary>
       <form id="owner-journal-form">

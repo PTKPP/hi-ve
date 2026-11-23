@@ -95,7 +95,7 @@ func (s Service) DispatchTransfer(ctx context.Context, tx pgx.Tx, scope Scope, i
 		if err = s.authorizeRoute(ctx, tx, scope, action, source, transfer.Destination); err != nil {
 			return err
 		}
-		const kind = "transfer.dispatch"
+		const kind = transferDispatchKind
 		replay, err := claim(ctx, tx, scope, kind, id, transfer)
 		if err != nil || replay {
 			return err

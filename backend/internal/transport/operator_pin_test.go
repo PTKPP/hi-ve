@@ -71,7 +71,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
 	svc := devices.Service{DB: db, CatalogCommands: true, InventoryCommands: true, SalesCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
-		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true}
+		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true, TenantEpochSchema: true}
 	newPIN := func() *identity.PIN {
 		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
 		if err != nil {
@@ -175,6 +175,40 @@ func TestOperatorPINPostgres(t *testing.T) {
 		expectStatus(t, res, status)
 		return res
 	}
+	t.Run("lifecycle fence between PIN admission and finalization", func(t *testing.T) {
+		fencedDevice := makeDevice("pin-epoch-fence")
+		profile, err := svc.PIN.CreateProfile(ctx, tenant, owner.Value, "pin-epoch-member", "pin-epoch-member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		zero := int64(0)
+		if _, err = svc.PIN.Set(ctx, tenant, profile.Member, owner.Value, "012345", &zero); err != nil {
+			t.Fatal(err)
+		}
+		exec(`INSERT INTO hive.tenant_location_role_assignments(tenant_id,member_id,role_id,location_id) VALUES($1,$2,$3,$4)`,
+			tenant, profile.Member, role, outlet)
+		exec(`INSERT INTO hive.device_operator_assignments(tenant_id,device_id,outlet_id,member_id) VALUES($1,$2,$3,$4)`,
+			tenant, fencedDevice, outlet, profile.Member)
+		fenced := app
+		var checks int
+		fenced.Devices.AuthorizeOperator = func(ctx context.Context, tx pgx.Tx, tenant, member, outlet string) error {
+			checks++
+			if checks == 2 {
+				// Admission has committed and PIN comparison has finished, but
+				// finalization has not acquired its authorization locks.
+				exec(`UPDATE hive.tenants SET status='suspended' WHERE id=$1`, tenant)
+				exec(`UPDATE hive.tenants SET status='active' WHERE id=$1`, tenant)
+			}
+			return identity.AuthorizeDeviceOperator(ctx, tx, tenant, member, outlet)
+		}
+		proof, input := loginRequest(fencedDevice, outlet, profile.Member, "012345", 0)
+		expectStatus(t, send(fenced.Handler(), "POST", base(fencedDevice)+"/context", proof, input, nil), 401)
+		if checks != 2 || id(`SELECT count(*)::text FROM hive.operational_contexts WHERE tenant_id=$1 AND device_id=$2`, tenant, fencedDevice) != "0" {
+			t.Fatal("stale PIN admission created an operational context")
+		}
+		expectStatus(t, send(handler, "POST", base(fencedDevice)+"/context", proof, input, nil), 401)
+		login(fencedDevice, outlet, profile.Member, "012345", 0, 201)
+	})
 	discovery := challenge(device, devices.OperationTarget{Operation: "profiles", Outlet: outlet})
 	expectStatus(t, send(handler, "GET", base(device)+"/profiles?outlet_id="+outlet, "bad-proof", nil, nil), 401)
 	profiles := send(handler, "GET", base(device)+"/profiles?outlet_id="+outlet, discovery, nil, nil)
