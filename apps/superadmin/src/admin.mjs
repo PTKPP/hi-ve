@@ -58,7 +58,10 @@ async function directory(next=false) {
   $("tenants").replaceChildren(...body.tenants.map(row=>{
     const item=element("li",row.name+" · "+row.status+(row.primary_owner_id ? " · Owner "+row.primary_owner_id : ""));
     const choose=element("button","Pilih "+row.name);
-    choose.addEventListener("click",()=>{$("tenant").value=row.tenant_id; $("audit-events").replaceChildren();$("audit-next").hidden=true;$("entitlement").textContent="";});
+    choose.addEventListener("click",()=>{$("tenant").value=row.tenant_id;
+      const lifecycle = document.querySelector('[data-operation="lifecycle"]').elements;
+      lifecycle.revision.value=row.revision??"";
+      lifecycle.expected_owner_id.value=row.primary_owner_id??""; $("audit-events").replaceChildren();$("audit-next").hidden=true;$("entitlement").textContent="";});
     item.append(" ",choose);return item;
   }));
   nextTenant=body.next;$("directory-next").hidden=!nextTenant;
@@ -88,9 +91,37 @@ $("reissue").addEventListener("click",action(async()=>{
 $("read-entitlement").addEventListener("click",action(async()=>{
   $("entitlement").textContent=JSON.stringify(await request(entitlement()),null,2);
 }));
+const pushSettingPath="/settings/notifications.web_push_enabled";
+$("read-push-setting").addEventListener("click",action(async()=>{
+  const current=await request(pushSettingPath);
+  const fields=document.querySelector('[data-operation="push-setting"]').elements;
+  fields.enabled.checked=current.enabled;
+  fields.revision.value=current.revision;
+}));
 document.querySelectorAll("form[data-operation]").forEach(form=>form.addEventListener("submit",action(async()=>{
   const data=Object.fromEntries(new FormData(form));
   switch(form.dataset.operation) {
+    case "push-setting": {
+      const result=await request(pushSettingPath,"PUT",{enabled:form.elements.enabled.checked,revision:Number(data.revision)});
+      form.elements.revision.value=result.revision;
+      $("notice").textContent="Pengaturan Web Push tersimpan.";
+      break;
+    }
+    case "lifecycle": {
+      const operation=data.action;
+      delete data.action;
+      if(!window.confirm("Konfirmasi "+operation+" untuk tenant "+selected()+"?")) return;
+      data.revision=Number(data.revision);
+      if(operation!=="transfer"){
+        delete data.expected_owner_id;
+        delete data.candidate_principal_id;
+        delete data.evidence_reference;
+      }
+      const result=await request("/tenants/"+selected()+"/lifecycle/"+operation,"POST",data);
+      form.elements.revision.value=result.revision;
+      $("notice").textContent="Tindakan tersimpan. Status "+result.status+".";
+      break;
+    }
     case "create": {
       const created=await request("/tenants","POST",data);
       $("tenant").value=created.tenant_id;

@@ -92,3 +92,36 @@ test("Owner dashboard falls back to polling after a WebSocket disconnect", async
   expect(polled).toBeGreaterThan(0);
   await expect(page.locator("#report-notice")).toBeEmpty();
 });
+
+test("Web Push requires opt-in and can be revoked for the browser", async ({page}) => {
+  let methods=[];
+  await page.addInitScript(() => {
+    Notification.requestPermission=async()=>"granted";
+    const subscription={endpoint:"https://fcm.googleapis.com/fcm/send/fixture",
+      toJSON:()=>({endpoint:"https://fcm.googleapis.com/fcm/send/fixture",keys:{p256dh:"fixture",auth:"fixture"}}),
+      unsubscribe:async()=>true};
+    PushManager.prototype.getSubscription=async()=>window.testPushSubscription??null;
+    PushManager.prototype.subscribe=async()=>window.testPushSubscription=subscription;
+  });
+  await page.route("**/api/v1/app/**",route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(path===base+"/reports/capabilities") return route.fulfill({json:["reports.dashboard","realtime.notifications"]});
+    if(path===base+"/reports/dashboard") return route.fulfill({json:{updated_at:new Date().toISOString(),total:totals,groups:[]}});
+    if(path===base+"/realtime/push"){
+      methods.push(route.request().method());
+      return route.request().method()==="GET" ? route.fulfill({json:{public_key:"AQ"}}) : route.fulfill({status:204});
+    }
+    return route.fulfill({status:404});
+  });
+  await page.goto("/");
+  await page.getByText("Dashboard dan laporan Owner",{exact:true}).click();
+  await page.getByLabel("Tenant laporan").fill(tenant);
+  await page.getByRole("button",{name:"Muat akses laporan"}).click();
+  await expect(page.getByRole("button",{name:"Aktifkan Web Push di browser ini"})).toBeVisible();
+  expect(methods).toEqual(["GET"]);
+  await page.getByRole("button",{name:"Aktifkan Web Push di browser ini"}).click();
+  await expect(page.locator("#report-message")).toHaveText("Web Push aktif di browser ini.");
+  await page.getByRole("button",{name:"Matikan Web Push di browser ini"}).click();
+  await expect(page.locator("#report-message")).toHaveText("Web Push dinonaktifkan.");
+  expect(methods).toEqual(["GET","PUT","DELETE"]);
+});

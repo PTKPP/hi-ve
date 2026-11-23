@@ -100,6 +100,7 @@
       <form id="report-filter" hidden>
         <label>Laporan <select name="kind"></select></label>
         <label>Periode <select name="range"><option>Hari ini</option><option>Kemarin</option><option>Rentang tanggal</option></select></label>
+        <label>Zona waktu laporan <input name="timezone" value="UTC" required autocomplete="off"></label>
         <label>Dari <input name="from" type="date" required></label>
         <label>Sampai <input name="through" type="date" required></label>
         <label>ID lokasi <input name="location" autocomplete="off"></label>
@@ -109,6 +110,9 @@
         <datalist id="report-movement-kinds"><option value="receiving"><option value="repacking"><option value="transfer"><option value="transfer.receipt"><option value="sale"></datalist>
         <button>Muat laporan</button>
         <button type="button" id="report-export" hidden>Unduh CSV halaman ini</button>
+        <button type="button" id="report-push" hidden>Aktifkan Web Push di browser ini</button>
+        <button type="button" id="report-push-off" hidden>Matikan Web Push di browser ini</button>
+        <button type="button" id="report-logout">Keluar sesi Owner</button>
         <button type="button" id="report-preference" hidden>Aktifkan notifikasi di aplikasi</button>
       </form>
       <p id="report-notice" role="status"></p>

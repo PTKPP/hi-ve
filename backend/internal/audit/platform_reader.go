@@ -19,8 +19,8 @@ type PlatformEvent struct {
 
 // PlatformHistory projects operational audit metadata. Organization
 // verification references and credential details stay in the write model.
-func PlatformHistory(ctx context.Context, tx pgx.Tx, tenant, beforeID, beforeSource string, before *time.Time) ([]PlatformEvent, error) {
-	rows, err := tx.Query(ctx, `
+func PlatformHistory(ctx context.Context, tx pgx.Tx, tenant, beforeID, beforeSource string, before *time.Time, includeLifecycle bool) ([]PlatformEvent, error) {
+	query := `
 	    (SELECT id,'provisioning'::text source,actor_id,action,outcome,occurred_at,NULL::text capability_id
 	     FROM hive.provisioning_audit WHERE tenant_id=$1 AND
 	     ($2::timestamptz IS NULL OR (occurred_at,id,'provisioning'::text)<($2,NULLIF($3,'')::uuid,$4))
@@ -29,8 +29,15 @@ func PlatformHistory(ctx context.Context, tx pgx.Tx, tenant, beforeID, beforeSou
 	    (SELECT id,'entitlement'::text source,actor_id,'entitlement.'||action,'succeeded',occurred_at,capability_id
 	     FROM hive.entitlement_audit WHERE tenant_id=$1 AND
 	     ($2::timestamptz IS NULL OR (occurred_at,id,'entitlement'::text)<($2,NULLIF($3,'')::uuid,$4))
-	     ORDER BY occurred_at DESC,id DESC LIMIT 51)
-	    ORDER BY occurred_at DESC,id DESC,source DESC LIMIT 51`, tenant, before, beforeID, beforeSource)
+	     ORDER BY occurred_at DESC,id DESC LIMIT 51) `
+	if includeLifecycle {
+		query += ` UNION ALL
+        (SELECT id,'lifecycle'::text source,actor_id,'tenant.'||action,'succeeded',occurred_at,NULL::text
+         FROM hive.tenant_administration_audit WHERE tenant_id=$1 AND
+         ($2::timestamptz IS NULL OR (occurred_at,id,'lifecycle'::text)<($2,NULLIF($3,'')::uuid,$4))
+         ORDER BY occurred_at DESC,id DESC LIMIT 51)`
+	}
+	rows, err := tx.Query(ctx, query+` ORDER BY occurred_at DESC,id DESC,source DESC LIMIT 51`, tenant, before, beforeID, beforeSource)
 	if err != nil {
 		return nil, err
 	}

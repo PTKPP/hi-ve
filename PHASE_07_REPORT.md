@@ -1,6 +1,6 @@
 # Laporan Phase 07 · Reports, Realtime dan Integrasi Frontend
 
-**Final Audit · PARTIAL / NO-GO untuk penutupan Phase 07.** PR #16 terverifikasi merged pada `cec0ce0703b2ed6ffb78e12d6d7b3f0e4a7b0c70`, titik awal `feat/phase-07-integration`. Scope yang teruji didokumentasikan di bawah. Backend tetap Go, PostgreSQL tetap otoritatif, dan rute Offline pada binary standar tetap tertutup.
+**Checkpoint historis sebelum persetujuan lanjutan · PARTIAL / NO-GO.** PR #16 terverifikasi merged pada `cec0ce0703b2ed6ffb78e12d6d7b3f0e4a7b0c70`, titik awal `feat/phase-07-integration`. Scope yang teruji didokumentasikan di bawah. Backend tetap Go, PostgreSQL tetap otoritatif, dan rute Offline pada binary standar tetap tertutup.
 
 Checkpoint backend `bc72695` dan frontend `3685d02`.
 
@@ -43,3 +43,24 @@ Checkpoint backend `bc72695` dan frontend `3685d02`.
 - Indeks aditif perlu pengukuran waktu pembangunan pada volume target. Outbox menambah satu titik serialisasi singkat per tenant saat commit dan terus tumbuh sampai kebijakan retensi disepakati. Ukur latensi realtime, koneksi per tenant dan laju pertumbuhan outbox sebelum pilot.
 - Laporan keuangan memakai cohort tanggal order dan status sekarang. Rekonsiliasi bank atau snapshot tutup buku berada di luar metrik ini. Export merupakan halaman berizin sehingga snapshot beberapa halaman dapat berbeda bila ada perubahan concurrent.
 - OPEN-002/014 tidak ditutup. Tidak dilakukan perubahan PRD, migrasi persisten, deployment, atau aktivasi Offline.
+
+## Engineering review internal setelah persetujuan lanjutan
+
+Ketiga keputusan diterapkan pada migrasi aditif 053–054. PR #17 tetap Draft untuk Final Audit terpisah menggunakan Codex High. Bagian Final Audit sebelumnya adalah checkpoint yang mendahului persetujuan ini. Belum ada keputusan engineering completion atau pilot pada checkpoint ini.
+
+| Keputusan | Implementasi dan batas |
+|---|---|
+| S3-G · FR-HV-SET-001 | `notifications.web_push_enabled` adalah boolean bertipe dengan default false. Pembacaan memakai `platform.settings.read` dan penulisan memakai `platform.settings.update`. Revision optimistis, key replay dan audit atomik. VAPID hanya melalui `HIVE_WEB_PUSH_VAPID_PUBLIC_KEY`, `HIVE_WEB_PUSH_VAPID_PRIVATE_KEY` dan `HIVE_WEB_PUSH_VAPID_SUBJECT` dari environment. |
+| Lifecycle/Owner · FR-HV-PLT-001/002 | Suspend, reactivate dan close memakai permission terpisah dan revision tenant. Closed terminal. Transfer mensyaratkan case ID unik per tenant, alasan, referensi bukti manual, Owner asal dan principal Google dengan Google issuer yang sudah terdaftar. Tepat satu Owner aktif dipertahankan secara atomik, sesi dan challenge lama dicabut, konteks operator ditutup dan epoch tenant dinaikkan. Histori, audit serta antrean pending dipertahankan. Tidak ada flow enrollment baru untuk calon yang belum memiliki principal Google tepercaya. |
+| Web Push · FR-NOTIF-01/AC-03 | Browser opt-in setelah API mengiklankan public key yang valid. Subscription terkait sesi tenant Google dan dua revision, yaitu setting dan entitlement. Logout/rotasi menghapus subscription melalui FK. Revoke/expiry menghentikan delivery dan grant baru tidak mengaktifkan subscription lama. Worker menggunakan outbox setelah commit, validasi ulang izin dan payload generik tanpa angka penjualan. Endpoint HTTPS provider dibatasi dan redirect ditolak. |
+| Zona waktu laporan · FR-DASH-01/AC-02 | UI mengirim tanggal kalender dan parameter zona waktu IANA yang divalidasi server. Default UTC. SQL tetap memakai batas absolut eksklusif; rentang 25 jam saat DST dan zona invalid tercakup tes. Kontrak lama `from/to` RFC3339 tetap didukung. |
+
+### Bukti dan risiko
+
+- Test disposable mencakup default setting, pemisahan permission, race revision, penolakan endpoint di luar allowlist, delivery at-most-once, revoke, logout, transfer replay, rollback audit, suspend/reactivate/close dan histori tetap utuh.
+- Go, vet, race, build, Govulncheck, architecture guard, preflight Compose 028 dan PostgreSQL disposable 052→054 lulus lokal. Dua tes Node dan 26 tes Chromium lulus. Suite Chromium menambah simulasi opt-in serta revoke per browser. Aktivasi memakai fixture browser; provider dan perangkat fisik **NOT RUN**. In-app, polling dan rollout Offline tidak bergantung pada Web Push.
+- Cursor push diklaim permanen sebelum HTTP untuk mencegah duplikasi lintas replica. Worker yang berhenti setelah claim atau respons provider ambigu dapat kehilangan sinyal push. Feed dalam aplikasi tetap dapat diputar ulang. Delivery memakai TTL nol untuk menghindari antrian provider setelah revoke. Notifikasi yang telah muncul di perangkat tidak dapat ditarik kembali.
+- Transfer memerlukan principal Google sah yang sudah terdaftar. Calon tanpa principal ditolak sampai ada enrollment Google yang telah diverifikasi. Fakta kepemilikan organisasi diteliti di luar aplikasi oleh Superadmin. Aplikasi menyimpan referensi dan tindakan yang diaudit.
+- OPEN-002/014 tetap terbuka. OPEN-015, kompatibilitas provider/browser fisik, dan validasi kapasitas delivery masuk Phase 08. Semua migration run hanya pada PostgreSQL disposable. Offline pada binary standar tetap tertutup. [Checks HEAD Draft PR #17](https://github.com/PTKPP/hi-ve/pull/17/checks)
+
+[Keputusan S3-G dan Web Push · Issue #9](https://github.com/PTKPP/hi-ve/issues/9#issuecomment-7095527544) · [Keputusan lifecycle · Issue #2](https://github.com/PTKPP/hi-ve/issues/2#issuecomment-7095528162)

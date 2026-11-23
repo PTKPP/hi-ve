@@ -35,11 +35,12 @@ awk '
     $1 == "hi-ve/backend/internal/reports" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|inventory|platform\/entitlements|sales)$/ { next }
     $1 == "hi-ve/backend/internal/realtime" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(identity|platform\/entitlements)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|settings|platform\/entitlements)$/ { next }
     $1 == "hi-ve/backend/internal/sales" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|inventory|locations|settings)$/ { next }
     $1 == "hi-ve/backend/internal/inventory" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|locations)$/ { next }
     $1 == "hi-ve/backend/internal/devices" && $2 == "hi-ve/backend/internal/identity" { next }
     $1 ~ /^hi-ve\/backend\/internal\/(devices|locations|settings)$/ && $2 == "hi-ve/backend/internal/audit" { next }
+    $1 == "hi-ve/backend/internal/settings" && $2 == "hi-ve/backend/internal/identity" { next }
     $1 == "hi-ve/backend/internal/identity" && $2 == "hi-ve/backend/internal/audit" { next }
     { print "Unexpected module dependency:", $1, "->", $2 > "/dev/stderr"; failed=1 }
     END { exit failed }

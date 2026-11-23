@@ -52,27 +52,28 @@ function closeWorkspace() {
   for (const id of ["report-data", "report-detail", "report-notice"]) $(id).replaceChildren();
   $("report-next").hidden = true;
 }
-function dateValue(date) {
-  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2,"0"), String(date.getDate()).padStart(2,"0")].join("-");
-}
 function setPreset() {
-  const today = new Date();
-  if (filters.elements.range.value === "Kemarin") today.setDate(today.getDate() - 1);
-  if (filters.elements.range.value !== "Rentang tanggal") {
-    filters.elements.from.value = dateValue(today);
-    filters.elements.through.value = dateValue(today);
-  }
+  try {
+    const tz=filters.elements.timezone.value.trim();
+    const fields=new Intl.DateTimeFormat("en-CA",{timeZone:tz,year:"numeric",month:"2-digit",day:"2-digit"})
+      .formatToParts(new Date());
+    const parts=Object.fromEntries(fields.map(part=>[part.type,part.value]));
+    const day=new Date(parts.year+"-"+parts.month+"-"+parts.day+"T00:00:00Z");
+    if(filters.elements.range.value==="Kemarin") day.setUTCDate(day.getUTCDate()-1);
+    if(filters.elements.range.value!=="Rentang tanggal"){
+      filters.elements.from.value=day.toISOString().slice(0,10);
+      filters.elements.through.value=filters.elements.from.value;
+    }
+  } catch { message("Zona waktu IANA tidak sah."); }
 }
 function query(kind) {
   const q = new URLSearchParams();
   const fields = filters.elements;
   if (kind !== "inventory") {
-    const from = new Date(fields.from.value + "T00:00:00");
-    const to = new Date(fields.through.value + "T00:00:00");
-    if (!Number.isFinite(+from) || !Number.isFinite(+to) || from > to) throw new Error("Pilih rentang tanggal yang sah.");
-    to.setDate(to.getDate() + 1);
-    q.set("from", from.toISOString());
-    q.set("to", to.toISOString());
+    if (!fields.from.value || !fields.through.value || fields.from.value > fields.through.value) throw new Error("Pilih rentang tanggal yang sah.");
+    q.set("date_from",fields.from.value);
+    q.set("date_through",fields.through.value);
+    q.set("timezone",fields.timezone.value.trim());
   }
   const keys = ["location", ...(["movements","inventory"].includes(kind) ? ["sku"] : []), ...(kind === "movements" ? ["actor","movement"] : [])];
   for (const key of keys) if (fields[key].value.trim()) q.set(key,fields[key].value.trim());
@@ -224,6 +225,16 @@ connect.addEventListener("submit",act(async () => {
   filters.hidden = false;
   $("report-export").hidden = current.kind === "dashboard";
   $("report-preference").hidden = !caps.includes("realtime.notifications") || !caps.includes("realtime.events");
+  const canPush = caps.includes("realtime.notifications") && "PushManager" in window && "Notification" in window && navigator.serviceWorker;
+  $("report-push").hidden=true;
+  $("report-push-off").hidden=!canPush;
+  if(canPush){
+    void request(base+"/realtime/push").then(key=>{
+      if(workspace!==current) return;
+      current.vapid=key.public_key;
+      $("report-push").hidden=false;
+    }).catch(()=>{});
+  }
   setPreset();
   current.query = query(current.kind);
   await load(current);
@@ -241,6 +252,36 @@ connect.addEventListener("submit",act(async () => {
   },7000);
 }));
 filters.elements.range.addEventListener("change",setPreset);
+filters.elements.timezone.addEventListener("change",setPreset);
+$("report-push").addEventListener("click",act(async () => {
+  const current=workspace;
+  if(!current?.vapid) return;
+  const permission=await Notification.requestPermission();
+  if(permission!=="granted"||workspace!==current) return;
+  const registration=await navigator.serviceWorker.ready;
+  const existing=await registration.pushManager.getSubscription();
+  const key=Uint8Array.from(atob(current.vapid.replaceAll("-","+").replaceAll("_","/")),x=>x.charCodeAt(0));
+  const sub=existing??await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:key});
+  try{
+    const {endpoint,keys}=sub.toJSON();
+    await request(current.base+"/realtime/push",{method:"PUT",body:JSON.stringify({endpoint,keys})});
+  }catch(error){if(!existing) await sub.unsubscribe();throw error;}
+  message("Web Push aktif di browser ini.");
+}));
+$("report-push-off").addEventListener("click",act(async () => {
+  const current=workspace;
+  const sub=await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+  if(sub){
+    await request(current.base+"/realtime/push",{method:"DELETE",body:JSON.stringify({endpoint:sub.endpoint})});
+    await sub.unsubscribe();
+  }
+  message("Web Push dinonaktifkan.");
+}));
+$("report-logout").addEventListener("click",act(async () => {
+  await request(workspace.base+"/logout",{method:"POST"});
+  closeWorkspace();
+  message("Sesi Owner ditutup.");
+}));
 filters.addEventListener("submit",act(async () => {
   const current=workspace;
   current.kind=filters.elements.kind.value;

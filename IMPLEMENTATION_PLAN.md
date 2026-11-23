@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00–06 ENGINEERING COMPLETED. Phase 07 PARTIAL / NO-GO untuk penutupan.** PR #16 merged pada `cec0ce0703b2ed6ffb78e12d6d7b3f0e4a7b0c70`. Reports, Realtime dan tiga frontend berada di `feat/phase-07-integration`. UAT target tetap Phase 08. [Laporan Phase 07](PHASE_07_REPORT.md)
+**Phase 00–06 ENGINEERING COMPLETED. Phase 07 menunggu Final Audit terpisah.** PR #16 merged pada `cec0ce0703b2ed6ffb78e12d6d7b3f0e4a7b0c70`. Reports, Realtime dan tiga frontend berada di `feat/phase-07-integration`. UAT target tetap Phase 08. [Laporan Phase 07](PHASE_07_REPORT.md)
 
 ## Audit dan exit Phase 00
 
@@ -30,7 +30,7 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | 04 · COMPLETED | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | PR #11 merged pada `8530b2c` |
 | 05 · COMPLETED | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | PR #15 merged pada `d2cdf40` |
 | 06 · ENGINEERING COMPLETED | PWA dan kasir online, lease/PIN tunai offline, Audit, sinkronisasi dan tindakan Owner. Entry 05 PASS dari PR #15 | Gate otomatis backend, PostgreSQL disposable dan browser. Offline tertutup pada binary standar | Phase 07 dimulai setelah merge PR #16 oleh Product Owner. UAT target mengikuti Phase 08. [Laporan Phase 06](PHASE_06_REPORT.md) |
-| 07 · PARTIAL / NO-GO | Reports, Realtime dan tiga frontend dari PR #16 merged | UAT-10, report scope, outbox, replay, polling dan build statis teruji. Global Settings, lifecycle/recovery setelah aktivasi dan background Web Push belum lengkap | Selesaikan dependency dan acceptance pada [Laporan Phase 07](PHASE_07_REPORT.md) |
+| 07 · MENUNGGU FINAL AUDIT | Reports, Realtime dan tiga frontend dari PR #16 merged. S3-G, lifecycle/Owner dan Web Push approved | UAT-10, report scope, outbox, replay, polling dan build statis. Engineering review lanjutan pada migrasi 053–054 | Final Audit terpisah dengan Codex High pada Draft PR #17. [Laporan Phase 07](PHASE_07_REPORT.md) |
 | 08 · MENUNGGU 07 | Acceptance pilot, reliability dan kesiapan rilis. Entry 07 PASS, target uji, perangkat pilot dan lingkungan tersedia | Semua AC P0 final dan skenario kritis lulus, UAT-01–10 serta UAT-HV terkait, restore terbukti, NFR-01–14/PM-01–06 diukur, temuan kritis ditutup. Termasuk UAT Android/iOS, benchmark PBKDF2 dan cetak fisik dari Phase 06, serta verifikasi risiko offline. Rekam keputusan go/no-go | Jalankan matriks Functional Spec §9 dan PRD §08. Verifikasi konfigurasi Cloudflare/VPS aktual dan otorisasi target sebelum rilis |
 
 ## Keputusan dan blocker
@@ -535,6 +535,12 @@ Checkpoint backend `cf32781` dan PWA `05b01fe`. Schema 050 hanya dijalankan pada
 | 07.6 | Final Audit **PARTIAL / NO-GO untuk penutupan**. UAT target tetap Phase 08. |
 
 Checkpoint backend `bc72695` dan frontend `3685d02`. Schema 051–052 diuji hanya pada PostgreSQL disposable. Compose development maksimal 028 dan Offline tetap tertutup pada binary standar. [Laporan Phase 07](PHASE_07_REPORT.md) · [Checks Draft PR #17](https://github.com/PTKPP/hi-ve/pull/17/checks)
+
+### Phase 07 · Persetujuan lanjutan dan engineering review
+
+Keputusan Product Owner menutup gate desain S3-G untuk boolean `notifications.web_push_enabled` (default false), lifecycle suspend/reactivate/close, transfer Owner dengan bukti manual dan principal Google yang telah terdaftar, serta Web Push per browser. API menggunakan permission khusus, audit, revision dan replay. Transfer/penutupan mencabut sesi lama, menutup context dan mempertahankan histori/pending. Web Push membaca setting dan outbox setelah commit, memeriksa ulang hak delivery, mengikat sesi dan revision, lalu mengirim payload generik. Laporan memakai zona IANA eksplisit dengan default UTC.
+
+Migrasi 053–054 hanya disposable. UAT provider/perangkat OPEN-015 tetap Phase 08. Draft PR #17 disiapkan untuk Final Audit terpisah menggunakan Codex High. [Laporan](PHASE_07_REPORT.md) · [Checks](https://github.com/PTKPP/hi-ve/pull/17/checks)
 
 ## Riwayat checkpoint
 

@@ -343,10 +343,15 @@ expect_sql hive_online_upgrade "$version" 49
 cp migrations/050_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 50
+cp migrations/0{51..52}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 52
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.offline_leases" 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
+expect_sql hive_online_upgrade "SELECT enabled::text FROM hive.global_boolean_settings WHERE key='notifications.web_push_enabled'" false
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.web_push_subscriptions" 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.realtime_events" 0
 printf 'PASS: upgrade 049 through reports and realtime preserves existing Owner sessions\n'
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
@@ -365,4 +370,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Reports|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Reports|PlatformControls|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"hi-ve/backend/internal/inventory"
 	"hi-ve/backend/internal/platform/entitlements"
@@ -73,7 +74,7 @@ func reportFilter(kind string, r *http.Request) (reports.Filter, string, error) 
 			return f, "", reports.ErrInput
 		}
 		switch k {
-		case "from", "to", "location", "cursor", "format":
+		case "from", "to", "date_from", "date_through", "timezone", "location", "cursor", "format":
 		case "sku":
 			if kind != "inventory" && kind != "movements" {
 				return f, "", reports.ErrInput
@@ -99,6 +100,25 @@ func reportFilter(kind string, r *http.Request) (reports.Filter, string, error) 
 		if err != nil {
 			return f, "", reports.ErrInput
 		}
+	}
+	if query.Has("date_from") || query.Has("date_through") || query.Has("timezone") {
+		zone := query.Get("timezone")
+		if query.Has("from") || query.Has("to") || zone == "" || zone == "Local" || len(zone) > 64 {
+			return f, "", reports.ErrInput
+		}
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			return f, "", reports.ErrInput
+		}
+		from, err := time.ParseInLocation(time.DateOnly, query.Get("date_from"), loc)
+		if err != nil {
+			return f, "", reports.ErrInput
+		}
+		through, err := time.ParseInLocation(time.DateOnly, query.Get("date_through"), loc)
+		if err != nil || through.Before(from) {
+			return f, "", reports.ErrInput
+		}
+		f.From, f.To = from.UTC(), through.AddDate(0, 0, 1).UTC()
 	}
 	if kind == "inventory" {
 		f.From, f.To = time.Time{}, time.Time{}

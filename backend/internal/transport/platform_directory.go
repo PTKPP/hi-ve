@@ -43,7 +43,7 @@ func (a API) directoryRoutes(mux *http.ServeMux) {
 		var before *time.Time
 		if len(q) > 0 {
 			at, err := time.Parse(time.RFC3339Nano, q.Get("before"))
-			if err != nil || len(q) != 3 || len(q["before"]) != 1 || len(q["before_id"]) != 1 || len(q["before_source"]) != 1 || !uuid.MatchString(id) || (source != "provisioning" && source != "entitlement") {
+			if err != nil || len(q) != 3 || len(q["before"]) != 1 || len(q["before_id"]) != 1 || len(q["before_source"]) != 1 || !uuid.MatchString(id) || (source != "provisioning" && source != "entitlement" && source != "lifecycle") {
 				fail(w, 400, "INVALID_REQUEST")
 				return
 			}
@@ -59,7 +59,7 @@ func (a API) directoryRoutes(mux *http.ServeMux) {
 				return err
 			}
 			var err error
-			rows, err = audit.PlatformHistory(r.Context(), tx, tenant, id, source, before)
+			rows, err = audit.PlatformHistory(r.Context(), tx, tenant, id, source, before, a.Global.DB != nil)
 			return err
 		})
 		if err != nil {

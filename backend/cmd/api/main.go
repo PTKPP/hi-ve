@@ -114,6 +114,13 @@ func run(ctx context.Context) error {
 	if version >= 52 {
 		api.Realtime = realtime.Service{DB: db, Entitlements: api.Entitlements}
 	}
+	if version >= 53 {
+		api.Global = settings.Global{DB: db}
+	}
+	if version >= 54 {
+		api.PushSchema = true
+		api.Realtime.Push = realtime.PushConfig{Public: os.Getenv("HIVE_WEB_PUSH_VAPID_PUBLIC_KEY"), Private: os.Getenv("HIVE_WEB_PUSH_VAPID_PRIVATE_KEY"), Subject: os.Getenv("HIVE_WEB_PUSH_VAPID_SUBJECT")}
+	}
 	// Offline routes are wired only by disposable test fixtures until the Phase 08 rollout gate passes.
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
@@ -165,6 +172,33 @@ func run(ctx context.Context) error {
 			}
 		}
 	}()
+	if api.PushSchema && api.Realtime.Push.Configured() {
+		pushDone := make(chan struct{})
+		go func() {
+			defer close(pushDone)
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-cleanupCtx.Done():
+					return
+				case <-ticker.C:
+					for range 8 {
+						work, stop := context.WithTimeout(cleanupCtx, 6*time.Second)
+						more, err := api.Realtime.DeliverPush(work)
+						stop()
+						if err != nil && cleanupCtx.Err() == nil {
+							slog.Warn("web push delivery attempt failed")
+						}
+						if !more || cleanupCtx.Err() != nil {
+							break
+						}
+					}
+				}
+			}
+		}()
+		defer func() { stopCleanup(); <-pushDone }()
+	}
 	defer func() {
 		stopCleanup()
 		<-cleanupDone

@@ -13,6 +13,7 @@ import (
 )
 
 type Service struct {
+	Push         PushConfig
 	DB           *pgxpool.Pool
 	Entitlements entitlements.Service
 }

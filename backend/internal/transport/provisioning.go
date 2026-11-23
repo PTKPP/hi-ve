@@ -49,6 +49,8 @@ type Google interface {
 }
 
 type API struct {
+	Global                 settings.Global
+	PushSchema             bool
 	Realtime               realtime.Service
 	Reports                reports.Service
 	Offline                offline.Service
@@ -83,6 +85,8 @@ func (a API) Handler() http.Handler {
 	a.salesRoutes(mux)
 	a.reportsRoutes(mux)
 	a.directoryRoutes(mux)
+	a.controlsRoutes(mux)
+	a.pushRoutes(mux)
 	a.realtimeRoutes(mux)
 	a.offlineRoutes(mux)
 	a.logoutRoutes(mux)
@@ -120,7 +124,7 @@ func (a API) origin(want string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", want)
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, Device-Proof")
 		next(w, r)
 	}
