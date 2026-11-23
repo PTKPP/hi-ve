@@ -10,6 +10,11 @@ docker compose --env-file /dev/null -f backend/deploy/staging/compose.yaml confi
         (.ports | length == 1 and .[0].host_ip == "127.0.0.1" and .[0].target == 8080) and
         (.volumes | length == 1 and .[0].read_only) and .cap_drop == ["ALL"] and
         .environment.HIVE_RUNTIME == "staging" and .healthcheck.test == ["CMD", "/hive-api", "healthcheck"])' >/dev/null
+diff -u - apps/landing/wrangler.staging.example.toml <<'TOML'
+name = "hi-ve-landing-staging"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-11-23"
+TOML
 for app in hi-ve-app superadmin; do
     diff -u - "apps/$app/wrangler.staging.example.toml" <<TOML
 name = "$app-staging"
@@ -22,4 +27,4 @@ directory = "./dist"
 not_found_handling = "404-page"
 TOML
 done
-printf 'PASS: staging Compose is loopback-only and Cloudflare Workers templates use static assets\n'
+printf 'PASS: staging Compose is loopback-only and Cloudflare templates use static assets\n'
