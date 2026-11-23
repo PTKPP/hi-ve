@@ -29,10 +29,16 @@ function say(text = "") {
   $.notice.textContent = text;
   $.notice.hidden = !text;
 }
+function checkAPIAvailability(error) {
+  if (error instanceof TypeError || error?.name === "TimeoutError" || error?.status >= 500) {
+    apiStatus("Tidak dapat dijangkau");
+  }
+}
 function handler(fn) {
   return async event => {
     event.preventDefault();
     try { await fn(event); } catch (error) {
+      checkAPIAvailability(error);
       if (error?.status === 401 || error?.status === 403) say("Akses ditolak oleh server. Periksa sesi dan izin.");
       else if (error?.status) say(failureReason(error));
       else say(error instanceof TypeError ? "Koneksi ke API tidak tersedia." : error.message);
@@ -219,7 +225,10 @@ function sync() {
   const current = scope;
   syncWork = reconcileCash(current, record => {
     if (current !== scope) throw new Error("Sesi berubah");
-    return salesWrite(current, "POST", `${checkoutPath(current)}/${record.id}/ack`, record.body, record.id);
+    return salesWrite(current, "POST", `${checkoutPath(current)}/${record.id}/ack`, record.body, record.id).catch(error => {
+      if (current === scope) checkAPIAvailability(error);
+      throw error;
+    });
   }).then(() => refreshQueue(current)).finally(() => { syncWork = undefined; });
   return syncWork;
 }
@@ -423,6 +432,7 @@ bind("pay", "submit", async () => {
         result = await salesWrite(current, "PUT", `${checkoutPath(current)}/${record.id}`, record.body, record.id);
         await recordACK(record, { ...result, posted_at: result.created_at });
       } catch (error) {
+        if (current === scope) checkAPIAvailability(error);
         await recordFailure(record, error);
         if (current === scope) say(failureReason(error));
         return;
@@ -535,7 +545,11 @@ bind("print", "click", () => window.print());
 window.addEventListener("offline", () => { apiStatus("Tidak dapat dijangkau"); updateButtons(); });
 window.addEventListener("online", () => { void reconnect(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) void reconnect(); });
-setInterval(() => { if (!document.hidden && scope && !checkoutBusy) void sync()?.catch(() => say("Pemeriksaan antrean belum selesai.")); }, 30000);
+setInterval(() => {
+  if (document.hidden || !installation || !navigator.onLine || checkoutBusy) return;
+  if (!apiReady) void reconnect();
+  else if (scope) void sync()?.catch(() => say("Pemeriksaan antrean belum selesai."));
+}, 30000);
 window.addEventListener("beforeinstallprompt", event => {
   event.preventDefault();
   deferredInstall = event;

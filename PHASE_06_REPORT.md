@@ -32,7 +32,7 @@ Snapshot lokal menyimpan data jual minimum. PIN, verifier backend, cookie, HPP, 
 | Go 1.27.4 dan boundary | **PASS lokal.** `gofmt`, `go vet ./...`, `go test -race -count=1 ./...`, `go build ./...` dan `bash scripts/check-architecture.sh`. |
 | PostgreSQL disposable | **PASS lokal.** `bash scripts/test-migrations.sh` mencakup fresh/retry/upgrade melalui 049, pengujian migrasi dan regresi OIDC, sesi, authorization, Inventory, Sales, concurrency dan rollback. `TestOperatorPINPostgres` juga mencakup proyeksi SKU dan ACK berulang, konflik payload, scope, dan penolakan ketika akses berubah. Rehearsal M5 dan preflight Compose 028 lulus. |
 | Keamanan dependency dan build | **PASS lokal.** Govulncheck dibangun dengan Go 1.27.4 dan tidak menemukan kerentanan pada paket yang dipindai. `npm audit --audit-level=high` melaporkan 0 kerentanan. `npm run check`, dua tes Node dan static build lulus. |
-| Browser | **PASS lokal, 14 Chromium fixture.** Meliputi ECDSA/Web Crypto, pairing dan kasir mobile, kehilangan respons sesudah commit simulasi, restart, ACK tanpa repost, draf offline, logout offline, kuota, eviction terdeteksi, harga usang, shortage, revoke/expiry/suspend, konfirmasi manual, pemanggilan print dan cache tanpa API. Suite ini memakai fixture HTTP, sedangkan suite Go menjalankan handler dan PostgreSQL sungguhan. |
+| Browser | **PASS lokal, 15 Chromium fixture.** Meliputi ECDSA/Web Crypto, pairing dan kasir mobile, kehilangan respons sesudah commit simulasi, restart, ACK tanpa repost, draf offline, API gagal saat jaringan tersambung, logout offline, kuota, eviction terdeteksi, harga usang, shortage, revoke/expiry/suspend, konfirmasi manual, pemanggilan print dan cache tanpa API. Suite ini memakai fixture HTTP, sedangkan suite Go menjalankan handler dan PostgreSQL sungguhan. |
 | Workflow dan UAT target | Bukti CI per revision dicatat di bawah. Browser target, OS printer, CORS/cookie pada host target dan UAT operator perangkat nyata **NOT RUN**. |
 
 ## Final Audit · exit gates
@@ -61,6 +61,6 @@ Eviction seluruh origin dapat menghapus IndexedDB dan marker sekaligus. Perminta
 
 ## Bukti GitHub Actions
 
-Branch dan checks tercatat di GitHub setelah push. [GitHub Actions Phase 06](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-06-offline)
+CI push dan pull request dijalankan dengan job Backend dan PWA pada HEAD Draft PR #16. [Draft PR #16](https://github.com/PTKPP/hi-ve/pull/16) · [Checks pada HEAD PR #16](https://github.com/PTKPP/hi-ve/pull/16/checks) · [GitHub Actions Phase 06](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-06-offline)
 
 **Iterasi berikutnya** setelah keputusan Product Owner adalah lease/verifier dan Audit event, dilanjutkan penerimaan transaksi offline dengan exception persisten, recovery/switch, dan UAT perangkat target.

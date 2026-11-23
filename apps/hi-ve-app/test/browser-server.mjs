@@ -60,6 +60,7 @@ async function api(req, res, url) {
     return send(res, 200, { device_id: device });
   }
   if (!pathname.startsWith(op)) return error(404, "NOT_FOUND");
+  if (state.mode === "api_unavailable") return error(503, "SERVICE_UNAVAILABLE");
   if (state.mode === "revoked" || state.mode === "suspended") return error(401, "INVALID_PAIRING_PROOF");
   const claims = signed(proof);
   if (pathname === op + "/challenges") {

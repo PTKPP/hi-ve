@@ -117,6 +117,19 @@ test("offline logout survives restart and closes the original online context", a
   expect(await fixture(page)).toMatchObject({ logouts: 1, puts: 0 });
 });
 
+test("an API outage with browser network up allows durable drafts only", async ({ page }) => {
+  await ready(page);
+  await addCart(page);
+  await fixture(page, { mode: "api_unavailable" });
+  await page.getByRole("button", { name: "Checkout" }).click();
+  await expect(page.locator("#network")).toHaveText("Terhubung");
+  await expect(page.locator("#api")).toHaveText("Tidak dapat dijangkau");
+  await expect(page.getByRole("button", { name: "Checkout" })).toBeDisabled();
+  await page.getByRole("button", { name: "Simpan draf tunai" }).click();
+  expect((await stored(page, "sales"))[0]).toMatchObject({ source: "offline_draft", state: "pending" });
+  expect(await fixture(page)).toMatchObject({ puts: 0, orders: 0 });
+});
+
 test("quota failure does not acknowledge local evidence or send checkout", async ({ page, context }) => {
   await context.addInitScript(() => {
     const original = IDBObjectStore.prototype.add;

@@ -521,7 +521,7 @@ OPEN-002/014 tetap terbuka. UI PWA, struk offline dan sinkronisasi mengikuti Pha
 | 06.5 · FR-HV-PIN-001/DEV-002/AUD-001 | **BLOCKED untuk offline.** Logout lokal dan pemulihan scope online tersedia. Tidak ada verifier/lease offline, pengiriman audit offline atau outlet switching. OPEN-001/007/008/013. |
 | 06.6 · Final Audit | **PARTIAL / NO-GO.** Go, PostgreSQL disposable dan browser fixture membuktikan jalur online dan pengamanan pending. UAT-05–07 penuh serta UAT perangkat/printing target belum lulus. WebSocket menunggu Phase 07. |
 
-Gate lokal Phase 06 mencakup Go 1.27.4, Govulncheck, preflight Compose 028, PostgreSQL disposable schema 049, rehearsal M5, Node dan Chromium. PRD dan schema tidak berubah. Bukti aktual CI, risiko residual dan rekomendasi untuk Product Owner dicatat pada laporan. Draft PR menuju `main`. [Laporan dan exit gates Phase 06](PHASE_06_REPORT.md)
+Gate lokal Phase 06 mencakup Go 1.27.4, Govulncheck, preflight Compose 028, PostgreSQL disposable schema 049, rehearsal M5, Node dan Chromium. PRD dan schema tidak berubah. Bukti aktual CI, risiko residual dan rekomendasi untuk Product Owner dicatat pada laporan. Commit implementasi awal `d217743` dan `43f2460`. [Draft PR #16](https://github.com/PTKPP/hi-ve/pull/16) · [Checks HEAD PR #16](https://github.com/PTKPP/hi-ve/pull/16/checks) · [Laporan dan exit gates Phase 06](PHASE_06_REPORT.md)
 
 ## Riwayat checkpoint
 
