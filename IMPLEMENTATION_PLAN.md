@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00–05 selesai. Phase 06 PARTIAL / NO-GO untuk review merge.** PR #15 terverifikasi merged ke `main` pada `d2cdf40eb64a6a105f920d9d4487ad2ff71c7296`. Branch `feat/phase-06-offline` berasal dari baseline tersebut. Gate offline penuh menunggu OPEN-001/007/008/013 dan UAT target. [Laporan Phase 06](PHASE_06_REPORT.md)
+**Phase 00–05 selesai. Phase 06 terimplementasi untuk kebijakan approved dan PARTIAL untuk acceptance target.** PR #15 merged pada `d2cdf40eb64a6a105f920d9d4487ad2ff71c7296`. Draft PR #16 di `feat/phase-06-offline`. OPEN-001/007/008/013 disetujui Product Owner dalam scope Phase 06. UAT fisik, KDF perangkat dan printer **NOT RUN**. [Laporan Phase 06](PHASE_06_REPORT.md)
 
 ## Audit dan exit Phase 00
 
@@ -29,7 +29,7 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | 03 · COMPLETED | Catalog, fitur Locations lanjutan dengan ID foundation yang sama, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | PR #10 merged pada `ac1356f` |
 | 04 · COMPLETED | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | PR #11 merged pada `8530b2c` |
 | 05 · COMPLETED | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | PR #15 merged pada `d2cdf40` |
-| 06 · PARTIAL / NO-GO | PWA dan kasir online, antrean lokal, lookup ACK, serta fail-closed untuk kebijakan offline. Entry 05 PASS dari PR #15 | Fondasi statis dan scope online teruji. UAT-05–07, autentikasi dan audit offline, switch/recovery serta UAT perangkat target belum memenuhi exit | Putuskan OPEN-001/007/008/013 sekaligus. [Laporan Phase 06](PHASE_06_REPORT.md) |
+| 06 · PARTIAL / NO-GO pilot | PWA dan kasir online, lease/PIN tunai offline, Audit, sinkronisasi dan tindakan Owner. Entry 05 PASS dari PR #15 | Gate backend, disposable DB dan browser fixture dijalankan. UAT fisik, KDF target dan printer NOT RUN | Verifikasi perangkat dan ingress target sesuai OPEN-015. [Laporan Phase 06](PHASE_06_REPORT.md) |
 | 07 · MENUNGGU 06 | Reports, Realtime dan integrasi tiga frontend. Entry 06 PASS, kontrak proyeksi dan payload berizin tersedia | Omzet UAT-10 benar, pending terpisah, event setelah commit, deduplikasi/reconnect, akses HPP diuji di API/report/export/cache/log/event. Build dan routing frontend static-only diverifikasi | Tetapkan dataset laporan dan observasi rollback/disconnect. Tahan hasil margin/valuasi sampai OPEN-002 selesai |
 | 08 · MENUNGGU 07 | Acceptance pilot, reliability dan kesiapan rilis. Entry 07 PASS, target uji, perangkat pilot dan lingkungan tersedia | Semua AC P0 final dan skenario kritis lulus, UAT-01–10 serta UAT-HV terkait, restore terbukti, NFR-01–14/PM-01–06 diukur, temuan kritis ditutup. Rekam keputusan go/no-go | Jalankan matriks Functional Spec §9 dan PRD §08. Verifikasi konfigurasi Cloudflare/VPS aktual dan otorisasi target sebelum rilis |
 
@@ -43,7 +43,7 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | OPEN-011/016 · kontrak dan review cakupan | APPROVED untuk provisioning awal sesuai D1–D5. Kontrak fitur dan bagian OPEN-016 lain mengikuti status review masing-masing. [Persetujuan Issue #2](https://github.com/PTKPP/hi-ve/issues/2#issuecomment-7008397059) |
 | Temuan traceability · CAP-16 → FR-HV-IDN-001 | Crosswalk Functional Spec §6.2 mengaitkan verifikasi kontak WhatsApp ke FR login Google. AC FR itu mencakup linking/login/logout. Product Owner + Security perlu meninjau kaitan dan skenario verifikasi kontak di OPEN-009/016. Tidak menghambat registry. |
 | OPEN-004/006/009 · identity dan audit | Product Owner + Security/Ops menetapkan bukti recovery/break-glass, retensi audit kritis, kebutuhan/provider verifikasi kontak. UAT-HV-11 BLOCKED oleh OPEN-004. Histori login operasional tujuh hari sudah disetujui. |
-| OPEN-001/007/008/013 · offline dan entitlement | Product Owner bersama Security, Platform dan Operations menetapkan TTL/KDF offline, revoke/suspend/grace, serta pemulihan perangkat/data pending. 72 jam masih kandidat. Pertahankan bukti pending dan uji kebijakan sesudah diputuskan. |
+| OPEN-001/007/008/013 · offline dan entitlement | **APPROVED Phase 06.** Lease maks. 24 jam, PBKDF2 minimal 600.000, 5/15 lockout, karantina revoke/suspend, tanpa grace otomatis dan rekonsiliasi Owner, switch dengan fencing dan recovery yang diaudit. [Issue #8](https://github.com/PTKPP/hi-ve/issues/8#issuecomment-7093429577) · [Issue #9](https://github.com/PTKPP/hi-ve/issues/9#issuecomment-7093429934) |
 | OPEN-002/003/014 · persediaan dan finansial | Product Owner bersama Inventory/Finance/Operations menetapkan metode HPP, approval posting dan perlakuan bahan penunjang. Field biaya Confidential dan pembatasan payload berlaku sejak awal. |
 | OPEN-010/012 · komersial dan pengukuran | Product Owner + Commercial menangani paket/harga/kuota secara terpisah dari registry. Product Owner + QA/Ops menilai target numerik dengan data pilot. |
 | OPEN-005 CLOSED, OPEN-015 masih OPEN | Landing di Pages, App dan Superadmin di Workers Static Assets. Engineering + Security/Ops masih perlu memvalidasi hostname, cookies, CSRF, OIDC redirects dan Tunnel pada target. |
@@ -514,14 +514,14 @@ OPEN-002/014 tetap terbuka. UI PWA, struk offline dan sinkronisasi mengikuti Pha
 
 | Increment | Status dan checkpoint |
 |---|---|
-| 06.1 · CAP-50/51/54 | **PASS untuk build dan browser uji.** Shell mobile/tablet, install manifest, service worker hanya untuk aset statis, dan IndexedDB v1. |
-| 06.2 · FR-POS-01–03, FR-HV-DEV-001/OPR-001/RCP-001 | **PASS untuk slice online.** Pairing dan proof P-256, login PIN online, harga outlet, checkout, pembayaran manual, histori dan struk. |
-| 06.3 · FR-OFF-01 | **PARTIAL.** Draf tunai terpisah dari checkout berizin, snapshot, UUID tetap dan penyimpanan sebelum konfirmasi. Autentikasi offline menunggu OPEN-001. |
-| 06.4 · FR-OFF-02/03 | **PARTIAL.** ACK server untuk checkout yang telah commit. Bukti lokal tidak dihapus, tidak ada repost offline. Shortage dan stale quote disimpan untuk tinjauan lokal. Ingest dan rekonsiliasi server menunggu OPEN-007/008 dan bukti otorisasi. |
-| 06.5 · FR-HV-PIN-001/DEV-002/AUD-001 | **BLOCKED untuk offline.** Logout lokal dan pemulihan scope online tersedia. Tidak ada verifier/lease offline, pengiriman audit offline atau outlet switching. OPEN-001/007/008/013. |
-| 06.6 · Final Audit | **PARTIAL / NO-GO.** Go, PostgreSQL disposable dan browser fixture membuktikan jalur online dan pengamanan pending. UAT-05–07 penuh serta UAT perangkat/printing target belum lulus. WebSocket menunggu Phase 07. |
+| 06.1 · CAP-50/51/54 | Static shell dan service worker cache hanya aset. IndexedDB v2 menjaga antrean v1. |
+| 06.2 · FR-POS-01–03, FR-HV-DEV-001/OPR-001/RCP-001 | Pairing, login, harga outlet, kasir online, histori dan struk terverifikasi oleh regresi. |
+| 06.3 · FR-OFF-01 | Penjualan tunai offline dengan lease scope dan envelope bertanda tangan. Sequence, snapshot dan pending disimpan atomik. |
+| 06.4 · FR-OFF-02/03 | Intake, ACK, dedup, karantina dan review Owner. Sales–Inventory atomik. Checkout ambigu dan bukti lama dipertahankan. |
+| 06.5 · FR-HV-PIN-001/DEV-002/AUD-001 | PBKDF2 600.000, lockout 5/15, Audit queue dan ACK, segel jurnal, recovery revoke, dan outlet switch dengan revision. Cold restart offline fail-closed sampai verifikasi waktu online. |
+| 06.6 · Final Audit | **PARTIAL untuk acceptance target.** Detail gate, CI dan risiko tersedia pada laporan. Distribusi WebSocket mengikuti Phase 07. UAT fisik, KDF target dan printer NOT RUN. |
 
-Gate lokal Phase 06 mencakup Go 1.27.4, Govulncheck, preflight Compose 028, PostgreSQL disposable schema 049, rehearsal M5, Node dan Chromium. PRD dan schema tidak berubah. Bukti aktual CI, risiko residual dan rekomendasi untuk Product Owner dicatat pada laporan. Commit Sales `d217743`, PWA `43f2460` dan respons outage API `fc6f5c7`. Shell statis `b210c3a` lulus smoke Chromium pada Wrangler lokal. CI push dan pull request pada `fc6f5c7` lulus. Revisi terkini dilacak pada checks HEAD Draft PR #16. [Draft PR #16](https://github.com/PTKPP/hi-ve/pull/16) · [Checks HEAD PR #16](https://github.com/PTKPP/hi-ve/pull/16/checks) · [Laporan dan exit gates Phase 06](PHASE_06_REPORT.md)
+Checkpoint backend `cf32781` dan PWA `05b01fe`. Schema 050 hanya dijalankan pada PostgreSQL disposable. Compose development tetap 028. [Draft PR #16](https://github.com/PTKPP/hi-ve/pull/16) · [Checks HEAD](https://github.com/PTKPP/hi-ve/pull/16/checks) · [Laporan Phase 06](PHASE_06_REPORT.md)
 
 ## Riwayat checkpoint
 
