@@ -158,6 +158,10 @@ for (const [mode, reason] of [["shortage", "Stok tidak cukup"], ["stale", "Harga
     await expect(page.locator("#queue")).toContainText(reason);
     expect((await stored(page, "sales"))[0].state).toBe("needs_review");
     expect(await fixture(page)).toMatchObject({ puts: 1, orders: 0 });
+    await page.getByRole("button", { name: "Cek bukti server" }).click();
+    await expect.poll(async () => (await fixture(page)).acks).toBe(1);
+    await expect(page.locator("#queue")).toContainText(reason);
+    expect(await fixture(page)).toMatchObject({ puts: 1, orders: 0 });
   });
 }
 

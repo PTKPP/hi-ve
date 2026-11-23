@@ -50,10 +50,13 @@ export function failureReason(error) {
 
 export async function recordFailure(record, error) {
   const terminal = [400, 401, 403, 409].includes(error?.status);
-  return updateCash(record.id, original => ({
-    ...original, state: terminal ? (error.status === 400 ? "failed" : "needs_review") : "pending",
-    reason: failureReason(error)
-  }));
+  return updateCash(record.id, original => {
+    if (!terminal && original.state === "needs_review") return original;
+    return {
+      ...original, state: terminal ? (error.status === 400 ? "failed" : "needs_review") : "pending",
+      reason: failureReason(error)
+    };
+  });
 }
 
 // Reconnect only looks up persisted orders. It never posts offline drafts or
@@ -78,7 +81,9 @@ export async function reconcileCash(scope, lookup) {
         break;
       }
       await updateCash(record.id, original => ({
-        ...original, state: "needs_review", reason: failureReason(error)
+        ...original, state: "needs_review",
+        reason: error.status === 404 && original.state === "needs_review" && original.reason
+          ? original.reason : failureReason(error)
       }));
       if (error.status === 401 || error.status === 403) break;
     }
