@@ -93,4 +93,3 @@ ALTER TABLE hive.device_operation_challenges ADD CONSTRAINT device_sales_command
 ) NOT VALID;
 ALTER TABLE hive.device_operation_challenges VALIDATE CONSTRAINT device_sales_command_target;
 ALTER TABLE hive.device_operation_challenges DROP CONSTRAINT device_bound_command_target;
-
