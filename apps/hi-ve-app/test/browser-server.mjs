@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync, randomUUID, sign, verify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 
@@ -9,9 +9,12 @@ const actor = "90000000-0000-4000-8000-000000000004";
 const context = "90000000-0000-4000-8000-000000000005";
 const sku = "90000000-0000-4000-8000-000000000006";
 const price = "90000000-0000-4000-8000-000000000007";
+const lease = "90000000-0000-4000-8000-000000000009";
+const issuer = generateKeyPairSync("ed25519");
+const leaseKey = issuer.publicKey.export({ format:"jwk" }).x;
 let state;
 function reset() {
-  state = { orders: new Map(), challenges: new Map(), key: null, context: false, puts: 0, acks: 0, logouts: 0, mode: "" };
+  state = { orders: new Map(), challenges: new Map(), key: null, context: false, puts: 0, acks: 0, logouts: 0, mode: "", loginEvents: new Map(), offlineSales: new Map(), signedLease: null };
 }
 reset();
 const op = `/api/v1/operator/tenants/${tenant}/devices/${device}`;
@@ -59,6 +62,30 @@ async function api(req, res, url) {
     }
     return send(res, 200, { device_id: device });
   }
+  if (pathname.startsWith(op + "/offline/leases/")) {
+    const claims = signed(proof);
+    const [, pathLease, collection, id] = pathname.slice((op + "/offline/leases").length).split("/");
+    const kind = { sales: "sale", logins: "login", seal: "seal" }[collection];
+    if (pathLease !== lease || claims?.lease_id !== lease || claims.tenant_id !== tenant ||
+        claims.device_id !== device || claims.purpose !== "hive.offline." + kind + ".v1" ||
+        claims.id !== (id || lease) || claims.digest !== createHash("sha256").update(source).digest("hex")) {
+      return error(401, "INVALID_PAIRING_PROOF");
+    }
+    if (collection === "seal") return body.sale_count === state.offlineSales.size ? send(res, 204) : error(409, "OFFLINE_JOURNAL_OUTSTANDING");
+    if (collection === "logins") {
+      if (state.loginEvents.has(id) && state.loginEvents.get(id) !== source) return error(409, "STATE_CONFLICT");
+      state.loginEvents.set(id, source);
+      return send(res, 200, { id, lease_id: lease, state: "recorded" });
+    }
+    let record = state.offlineSales.get(id);
+    if (record && record.source !== source) return error(409, "STATE_CONFLICT");
+    if (!record) {
+      const reason = { revoked: "device_revoked", suspended: "tenant_suspended", shortage: "stock_shortage" }[state.mode] ?? null;
+      record = { source, ack: {id, lease_id: lease, state: reason ? "needs_review" : "posted", reason, received_at: time()} };
+      state.offlineSales.set(id, record);
+    }
+    return send(res, 200, record.ack);
+  }
   if (!pathname.startsWith(op)) return error(404, "NOT_FOUND");
   if (state.mode === "api_unavailable") return error(503, "SERVICE_UNAVAILABLE");
   if (state.mode === "revoked" || state.mode === "suspended") return error(401, "INVALID_PAIRING_PROOF");
@@ -99,6 +126,19 @@ async function api(req, res, url) {
     return send(res, 204);
   }
   if (claims.operation === "context.read") {
+    if (pathname === op + "/offline/lease") {
+      if (!state.signedLease) {
+        const issued = Date.now();
+        const payload = Buffer.from(JSON.stringify({
+          id: lease, tenant_id: tenant, device_id: device, outlet_id: outlet, operator_id: actor,
+          context_id: context, device_revision: 1, context_revision: 1, credential_revision: 1,
+          discount_allowed: false, issued_at: new Date(issued).toISOString(), expires_at: new Date(issued + 86_400_000).toISOString()
+        })).toString("base64url");
+        const signature = sign(null, Buffer.from("hive.offline.lease.v1." + payload), issuer.privateKey).toString("base64url");
+        state.signedLease = {payload, signature, public_key: leaseKey};
+      }
+      return send(res, 200, {...state.signedLease, server_time: time()});
+    }
     if (pathname === op + "/context") return send(res, 200, { context_id: context, member_id: actor, outlet_id: outlet, revision: 1 });
     if (pathname === sales + "/items/search") return send(res, 200, [
       { sku_id: sku, code: "madu", name: "Madu Randu", variant: "Botol", unit: "pcs", batch_tracked: false }
@@ -161,7 +201,7 @@ createServer(async (req, res) => {
         if (body.reset) reset();
         if (body.mode !== undefined) state.mode = body.mode;
       }
-      return send(res, 200, { puts: state.puts, acks: state.acks, orders: state.orders.size, logouts: state.logouts });
+      return send(res, 200, { puts: state.puts, acks: state.acks, orders: state.orders.size, logouts: state.logouts, offlineSales: state.offlineSales.size, loginEvents: state.loginEvents.size });
     }
     if (url.pathname.startsWith("/api/")) return await api(req, res, url);
     if (url.pathname === "/index.html") {

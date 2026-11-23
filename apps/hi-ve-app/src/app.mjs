@@ -1,6 +1,8 @@
 import { operation, sessionOperation, salesWrite, startPairing, redeemPairing } from "./api.mjs";
 import { clearLockedSession, listCash, openStorage, readMeta, writeMeta } from "./storage.mjs";
 import { cashPayload, stageCash, reconcileCash, recordACK, recordFailure, failureReason } from "./sync.mjs";
+import { cacheQuote, clearAnchor, denyOffline, enroll, flushOffline, lockOffline, offlineLogin, reanchor,
+  saveOfflineSale, searchQuotes, sealOffline } from "./offline.mjs";
 import { formatMoney, lineTotal, minorUnits } from "./money.mjs";
 
 const byId = id => document.getElementById(id);
@@ -10,14 +12,14 @@ const installationMarker = "hi-ve-app-has-installation";
 const statusLabels = {
   pending: "Pending", synced: "Tersinkron", failed: "Gagal", needs_review: "Perlu tinjauan",
   pending_manual_confirmation: "Menunggu konfirmasi manual", manually_confirmed: "Dikonfirmasi manual",
-  cash_received: "Tunai diterima"
+  cash_received: "Tunai diterima", manual_refund_recorded: "Refund manual tercatat"
 };
 
 let installation, scope, pairing, pairStartKey, redeemKey;
 let cart = [], profiles = [], history = [];
 let apiReady = false, checkoutBusy = false, syncWork, reconnectWork, storageLost = false;
 let manualAttempt, deferredInstall;
-let sessionEpoch = 0;
+let sessionEpoch = 0, usingOffline = false, hasJournal = false;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -55,10 +57,14 @@ function apiStatus(label, ready = false) {
 }
 function updateButtons() {
   $.network.textContent = navigator.onLine ? "Terhubung" : "Offline";
-  $.checkout.disabled = checkoutBusy || storageLost || !scope || !navigator.onLine || !apiReady || !cart.length;
-  byId("save-draft").hidden = !scope || (navigator.onLine && apiReady);
+  const online = navigator.onLine && apiReady;
+  $.checkout.disabled = checkoutBusy || storageLost || !scope || !cart.length || (!usingOffline && !online);
+  $.checkout.textContent = usingOffline ? "Simpan penjualan tunai pending" : "Checkout";
+  byId("offline-unlock").hidden = !installation || storageLost || online || usingOffline || !hasJournal;
+  $.seal.hidden = !scope || !hasJournal || !online || usingOffline;
+  $.pay.elements.method.options[1].disabled = usingOffline || !online;
+  byId("save-draft").hidden = !scope || usingOffline || online;
   byId("save-draft").disabled = checkoutBusy || storageLost || !cart.length || $.pay.elements.method.value !== "cash";
-  $.pay.elements.method.options[1].disabled = !navigator.onLine || !apiReady;
   byId("tender-label").hidden = $.pay.elements.method.value !== "cash";
 }
 function showContext() {
@@ -161,10 +167,10 @@ function validateCheckout(method) {
   delete body.tendered;
   return { ...body, method };
 }
-function renderReceipt(data, local = false) {
+function renderReceipt(data, local = false, queued = false) {
   const section = byId("receipt-data");
   section.replaceChildren();
-  section.append(element("strong", local ? "DRAF LOKAL — belum diterima server" : statusLabels[data.payment_state] ?? data.payment_state));
+  section.append(element("strong", local ? (queued ? "TUNAI PENDING — belum diterima server" : "DRAF LOKAL — belum diterima server") : statusLabels[data.payment_state] ?? data.payment_state));
   section.append(element("p", data.id));
   if (data.outlet_name || data.outlet_id) section.append(element("p", `Outlet ${data.outlet_name ?? data.outlet_id}`));
   if (data.operator_id) section.append(element("p", `Operator ${data.operator_id}`));
@@ -189,7 +195,7 @@ function renderLocalEvidence(row) {
     id: row.id, outlet_id: row.outlet, operator_id: row.operator, created_at: row.recordedAt,
     items: items.map(item => ({ ...item, net: minorString(item.net) })),
     total: minorString(items.reduce((sum, item) => sum + item.net, 0n))
-  }, true);
+  }, true, row.source === "offline_sale");
 }
 
 function minorString(amount) {
@@ -235,9 +241,20 @@ function sync() {
 async function recoverSession() {
   if (!installation || checkoutBusy) return;
   const epoch = sessionEpoch;
-  await operation(installation, { operation: "state" }, "/state");
+  const deviceState = await operation(installation, { operation: "state" }, "/state");
   if (epoch !== sessionEpoch) return;
+  lockOffline();
+  usingOffline = false;
   apiStatus("Tersedia", true);
+  if (uuid.test(deviceState.last_outlet_id) && installation.outlet !== deviceState.last_outlet_id) {
+    scope = undefined;
+    clearAnchor();
+    installation = { ...installation, outlet: deviceState.last_outlet_id };
+    await writeMeta("installation", installation);
+    await writeMeta("session", null);
+    showContext();
+    return;
+  }
   const pointer = await readMeta("session");
   if (epoch !== sessionEpoch) return;
   if (!pointer || pointer.tenant !== installation.tenant || pointer.device !== installation.device) {
@@ -261,6 +278,7 @@ async function recoverSession() {
   scope = sessionFrom(live);
   showContext();
   await refreshQueue();
+  await reanchor(scope, () => leaseFor(scope)).catch(() => {});
   await sync();
 }
 function validSession(data, pairingContext) {
@@ -277,9 +295,17 @@ async function reconnect() {
   updateButtons();
   if (!navigator.onLine) { apiStatus("Tidak dapat dijangkau"); return; }
   if (reconnectWork) return reconnectWork;
-  reconnectWork = recoverSession().catch(error => {
+  reconnectWork = (async () => {
+    if (installation) {
+      try { await flushOffline(installation); }
+      catch { say("Antrean offline belum seluruhnya diterima server."); }
+    }
+    await recoverSession();
+  })().catch(async error => {
     apiStatus(error.status ? "Menolak akses" : "Tidak dapat dijangkau");
     if (error.status === 401 || error.status === 403) {
+      await denyOffline();
+      usingOffline = false;
       scope = undefined;
       showContext();
       say("Sesi atau izin harus diperiksa kembali. Bukti lokal tetap tersimpan.");
@@ -337,9 +363,12 @@ bind("profiles", "click", async () => {
   apiStatus("Tersedia", true);
   say(profiles.length ? "" : "Tidak ada profil yang ditugaskan pada outlet ini.");
 });
+function leaseFor(current) {
+  return sessionOperation(current, "context.read", "/offline/lease", { method: "POST" });
+}
 bind("pin-login", "submit", async event => {
   const form = event.currentTarget;
-  const member = form.elements.member.value, pin = form.elements.pin.value;
+  const member = form.elements.member.value, pin = form.elements.pin.value, prepare = form.elements.enroll.checked;
   form.elements.pin.value = "";
   if (!uuid.test(member) || !/^\d{6}$/.test(pin)) throw new Error("Pilih operator dan masukkan PIN enam digit");
   const state = await operation(installation, { operation: "state" }, "/state");
@@ -356,15 +385,50 @@ bind("pin-login", "submit", async event => {
   const current = sessionFrom(result);
   await writeMeta("session", current);
   scope = current;
+  usingOffline = false;
   apiStatus("Tersedia", true);
   showContext();
   say();
+  if (prepare) {
+    try {
+      if (!navigator.locks || !globalThis.crypto?.subtle) throw new Error("Browser tidak mendukung akses offline");
+      await enroll(await leaseFor(current), current, pin);
+      hasJournal = true;
+      updateButtons();
+      say("PIN offline siap untuk operator dan outlet ini.");
+    } catch (error) {
+      say(error.code === "OFFLINE_JOURNAL_OUTSTANDING" ? "Owner perlu menutup jurnal sebelumnya sebelum izin baru dibuat." :
+        "Izin offline belum siap. Kasir online tetap tersedia.");
+    }
+  }
   await refreshQueue();
   await sync();
+});
+bind("offline-login", "submit", async event => {
+  if (navigator.onLine && apiReady) return;
+  const field = event.currentTarget.elements.pin;
+  const pin = field.value;
+  field.value = "";
+  const current = await offlineLogin(pin, installation);
+  if (scope?.context !== current.context) { scope = undefined; showContext(); }
+  scope = current;
+  usingOffline = true;
+  $.pay.elements.method.value = "cash";
+  showContext();
+  await refreshQueue();
+  say("Kasir tunai offline aktif. Transaksi menunggu penerimaan server.");
+});
+bind("seal", "click", async () => {
+  if (!installation || !apiReady || !navigator.onLine) return;
+  await sealOffline(installation);
+  await refreshQueue();
+  say("Jurnal disegel. Minta Owner meninjau dan menutupnya sebelum pindah outlet.");
 });
 bind("logout", "click", async () => {
   const prior = scope;
   sessionEpoch++;
+  usingOffline = false;
+  lockOffline();
   scope = undefined;
   showContext();
   await writeMeta("session", prior ? { ...prior, locked: true } : null);
@@ -380,8 +444,10 @@ bind("logout", "click", async () => {
 });
 bind("search", "submit", async event => {
   const current = scope, term = String(new FormData(event.currentTarget).get("query")).trim();
-  if (!current || !apiReady || !navigator.onLine) throw new Error("Pencarian produk memerlukan API aktif");
-  const items = await sessionOperation(current, "context.read", `${checkoutPath(current)}/items/search?q=${encodeURIComponent(term)}`);
+  if (!current || !usingOffline && (!apiReady || !navigator.onLine)) throw new Error("Pencarian produk memerlukan sesi aktif");
+  const offline = usingOffline;
+  const items = offline ? await searchQuotes(term) :
+    await sessionOperation(current, "context.read", `${checkoutPath(current)}/items/search?q=${encodeURIComponent(term)}`);
   if (scope !== current) return;
   $.products.replaceChildren();
   if (!items?.length) $.products.append(element("p", "Produk tidak ditemukan."));
@@ -392,13 +458,16 @@ bind("search", "submit", async event => {
     const pick = element("button", "Lihat harga dan tambahkan");
     pick.addEventListener("click", handler(async () => {
       if (scope !== current) return;
-      const price = await sessionOperation(current, "context.read", `/catalog/skus/${item.sku_id}/price`);
+      const price = offline ? { price_id: item.price_id, amount: item.unitPrice, updated_at: item.priceUpdatedAt } :
+        await sessionOperation(current, "context.read", `/catalog/skus/${item.sku_id}/price`);
       if (scope !== current) return;
-      cart.push({
-        rowId: crypto.randomUUID(), sku_id: item.sku_id, name: item.name, variant: item.variant, unit: item.unit,
+      const row = {
+        rowId: crypto.randomUUID(), sku_id: item.sku_id, name: item.name, variant: item.variant, unit: item.unit, code: item.code, barcode: item.barcode,
         batch_tracked: item.batch_tracked === true, price_id: price.price_id, unitPrice: price.amount,
         priceUpdatedAt: price.updated_at, quantity: "1", discount: "0"
-      });
+      };
+      cart.push(row);
+      if (!offline) await cacheQuote(current, row).catch(() => {});
       renderCart();
     }));
     block.append(pick);
@@ -408,14 +477,23 @@ bind("search", "submit", async event => {
 bind("pay", "change", updateButtons);
 
 bind("pay", "submit", async () => {
-  if (checkoutBusy || !scope || !navigator.onLine || !apiReady) return;
+  if (checkoutBusy || !scope || !usingOffline && (!navigator.onLine || !apiReady)) return;
   const current = scope, method = $.pay.elements.method.value;
   const payload = validateCheckout(method);
   checkoutBusy = true;
   updateButtons();
   say();
   try {
-    if (method === "cash") {
+    if (usingOffline) {
+      if (method !== "cash") throw new Error("Hanya tunai tersedia offline");
+      const row = await saveOfflineSale(current, cart, payload.tendered);
+      if (current === scope) {
+        cart = [];
+        renderCart();
+        renderLocalEvidence(row);
+        say("Penjualan tunai tersimpan. Menunggu penerimaan server.");
+      }
+    } else if (method === "cash") {
       // Require a live session immediately before creating an online-attempt row.
       await sessionOperation(current, "context.read", "/context");
       if (current !== scope) return;
@@ -548,7 +626,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) void
 setInterval(() => {
   if (document.hidden || !installation || !navigator.onLine || checkoutBusy) return;
   if (!apiReady) void reconnect();
-  else if (scope) void sync()?.catch(() => say("Pemeriksaan antrean belum selesai."));
+  else if (scope && !usingOffline) {
+    void flushOffline(installation).then(() => refreshQueue()).catch(() => say("Antrean offline belum seluruhnya diterima server."));
+    void sync()?.catch(() => say("Pemeriksaan antrean belum selesai."));
+  }
 }, 30000);
 window.addEventListener("beforeinstallprompt", event => {
   event.preventDefault();
@@ -567,6 +648,7 @@ async function init() {
   try {
     await openStorage();
     installation = await readMeta("installation");
+    hasJournal = Boolean(await readMeta("offline-lease"));
     storageLost = Boolean(localStorage.getItem(installationMarker)) && !installation;
     if (storageLost) say("Penyimpanan perangkat hilang. Hubungi Owner untuk recovery. Pairing dan posting dikunci.");
   } catch {

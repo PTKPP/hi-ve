@@ -9,6 +9,7 @@
   <link rel="apple-touch-icon" href="/icons/hive-192.png">
   <link rel="stylesheet" href="/app.css">
   <script src="/assets/app.mjs" type="module"></script>
+  <script src="/assets/owner-offline.mjs" type="module"></script>
 </head>
 <body>
   <header class="topbar">
@@ -41,7 +42,15 @@
       <form id="pin-login">
         <label>Operator <select name="member" required></select></label>
         <label>PIN <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
+        <label><input type="checkbox" name="enroll"> Siapkan PIN offline untuk perangkat ini</label>
         <button class="primary">Masuk</button>
+      </form>
+    </section>
+    <section id="offline-unlock" class="panel setup" hidden>
+      <h1>Akses tunai offline</h1>
+      <form id="offline-login">
+        <label>PIN offline <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
+        <button class="primary">Buka kasir offline</button>
       </form>
     </section>
     <section id="workspace" hidden>
@@ -71,6 +80,7 @@
         <div class="section-header"><h2>Antrean transaksi</h2><button id="sync">Cek bukti server</button></div>
         <p id="last-sync">Belum ada sinkronisasi.</p>
         <div id="queue"></div>
+        <button id="seal" type="button" hidden>Ajukan penutupan jurnal kepada Owner</button>
         <button id="persist" type="button">Minta penyimpanan persisten</button>
       </section>
       <section class="panel below">
@@ -79,6 +89,21 @@
         <button id="history-more" hidden>Halaman berikutnya</button>
       </section>
     </section>
+    <details class="panel below" id="owner-offline">
+      <summary>Rekonsiliasi offline untuk Primary Owner</summary>
+      <form id="owner-journal-form">
+        <label>Tenant rekonsiliasi <input name="tenant" required autocomplete="off"></label>
+        <button name="action" value="review">Muat rekonsiliasi</button>
+        <button name="action" value="login">Masuk Google sebagai Owner</button>
+      </form>
+      <p id="owner-journal-status" role="status"></p>
+      <div id="owner-journal-results"></div>
+      <form id="owner-switch-form">
+        <label>ID perangkat <input name="device" required autocomplete="off"></label>
+        <button>Periksa outlet yang ditugaskan</button>
+      </form>
+      <div id="owner-switch-results"></div>
+    </details>
     <section id="receipt" class="panel below" aria-label="Struk" hidden>
       <div class="section-header"><h2>Struk</h2><button id="print">Cetak</button></div>
       <div id="receipt-data"></div>

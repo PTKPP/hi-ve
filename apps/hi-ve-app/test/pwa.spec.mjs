@@ -7,17 +7,18 @@ async function fixture(page, body) {
   const response = body ? await page.request.post("/__fixture/state", { data: body }) : await page.request.get("/__fixture/state");
   return response.json();
 }
-async function ready(page) {
+async function ready(page, prepare = false) {
   await fixture(page, { reset: true });
   await page.goto("/");
   await page.getByRole("button", { name: "Buat kode pairing" }).click();
   await expect(page.locator("#pair-code")).toHaveText("12345678");
-  await page.getByLabel("ID tenant").fill(tenant);
+  await page.getByLabel("ID tenant", { exact: true }).fill(tenant);
   await page.getByLabel("ID outlet").fill(outlet);
   await page.getByRole("button", { name: "Selesaikan pairing" }).click();
   await page.getByRole("button", { name: "Muat profil" }).click();
   await expect(page.getByRole("option", { name: "Operator Uji" })).toBeAttached();
   await page.getByLabel("PIN", { exact: true }).fill("654321");
+  if (prepare) await page.getByLabel("Siapkan PIN offline").check();
   await page.getByRole("button", { name: "Masuk", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Penjualan", exact: true })).toBeVisible();
 }
@@ -217,4 +218,106 @@ test("manual payment stays pending until online confirmation", async ({ page }) 
   page.once("dialog", dialog => dialog.accept("REF-ONLINE"));
   await page.getByRole("button", { name: "Catat pembayaran manual" }).click();
   await expect(page.locator("#receipt-data")).toContainText("Dikonfirmasi manual");
+});
+
+async function enterOfflinePIN(page, pin) {
+  await page.getByLabel("PIN offline", { exact: true }).fill(pin);
+  await page.getByRole("button", { name: "Buka kasir offline" }).click();
+}
+
+test("signed lease, cash-only queue and durable audit ACK after restart", async ({ page, context }) => {
+  await ready(page, true);
+  await expect(page.locator("#notice")).toContainText("PIN offline siap");
+  await addCart(page);
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await context.setOffline(true);
+  await enterOfflinePIN(page, "654321");
+  await expect(page.locator("#notice")).toContainText("Kasir tunai offline aktif");
+  await expect(page.getByRole("option", { name: "Nontunai manual" })).toBeDisabled();
+  await page.getByRole("button", { name: "Simpan penjualan tunai pending" }).click();
+  await expect(page.locator("#receipt-data")).toContainText("TUNAI PENDING");
+  const queued = (await stored(page, "sales"))[0];
+  expect(queued).toMatchObject({ source: "offline_sale", state: "pending", sequence: 1 });
+  expect(await stored(page, "login_events")).toHaveLength(1);
+  expect(JSON.stringify(await stored(page, "meta"))).not.toContain("654321");
+  await page.reload();
+  await enterOfflinePIN(page, "654321");
+  await expect(page.locator("#notice")).toContainText("perlu verifikasi online");
+  await context.setOffline(false);
+  await expect(page.locator("#queue")).toContainText("Tersinkron");
+  await expect.poll(async () => (await stored(page, "login_events")).length).toBe(0);
+  await page.getByRole("button", { name: "Cek bukti server" }).click();
+  expect(await fixture(page)).toMatchObject({ offlineSales: 1, loginEvents: 1, puts: 0 });
+  expect((await stored(page, "sales"))[0]).toMatchObject({ id: queued.id, offlineACK: "posted", state: "synced" });
+});
+
+test("offline PIN lockout is shared across concurrent tabs", async ({ page, context }) => {
+  await ready(page, true);
+  await expect(page.locator("#notice")).toContainText("PIN offline siap");
+  const second = await context.newPage();
+  const renewed = second.waitForResponse(response => response.url().endsWith("/offline/lease"));
+  await second.goto("/");
+  await expect(second.getByRole("heading", { name: "Penjualan", exact: true })).toBeVisible();
+  // Allow the live-context reanchor to finish before simulating disconnect.
+  await renewed;
+  await context.setOffline(true);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await enterOfflinePIN(page, "000000");
+    await expect.poll(async () => (await stored(page, "login_events")).length).toBe(attempt + 1);
+    await expect(page.locator("#notice")).toContainText("PIN tidak sesuai");
+  }
+  await Promise.all([enterOfflinePIN(page, "000000"), enterOfflinePIN(second, "000000")]);
+  await expect(page.locator("#notice")).toHaveText(/PIN dikunci/);
+  await expect(second.locator("#notice")).toHaveText(/PIN dikunci/);
+  await enterOfflinePIN(page, "654321");
+  await expect(page.locator("#notice")).toContainText("dikunci sementara");
+  expect(await stored(page, "login_events")).toHaveLength(5);
+});
+
+for (const [offset, reason] of [[-60000, "Perubahan jam terdeteksi"], [86_400_000, "izin offline kedaluwarsa"]]) {
+  test(`offline PIN denies clock change ${offset}`, async ({ page, context }) => {
+    await ready(page, true);
+    await expect(page.locator("#notice")).toContainText("PIN offline siap");
+    await context.setOffline(true);
+    await page.evaluate(delta => {
+      const now = Date.now.bind(Date);
+      Date.now = () => now() + delta;
+    }, offset);
+    await enterOfflinePIN(page, "654321");
+    await expect(page.locator("#notice")).toContainText(new RegExp(reason, "i"));
+    expect(await stored(page, "login_events")).toHaveLength(0);
+  });
+}
+
+test("a revoked device can submit signed evidence but cannot recover access", async ({ page, context }) => {
+  await ready(page, true);
+  await expect(page.locator("#notice")).toContainText("PIN offline siap");
+  await addCart(page);
+  await context.setOffline(true);
+  await enterOfflinePIN(page, "654321");
+  await page.getByRole("button", { name: "Simpan penjualan tunai pending" }).click();
+  await expect(page.locator("#receipt-data")).toContainText("TUNAI PENDING");
+  await fixture(page, { mode: "revoked" });
+  await context.setOffline(false);
+  await expect.poll(async () => (await stored(page, "sales"))[0]?.state).toBe("needs_review");
+  await expect(page.getByRole("heading", { name: "Masuk sebagai operator" })).toBeVisible();
+  expect((await stored(page, "sales"))[0]).toMatchObject({ offlineACK: "needs_review", reason: "device_revoked" });
+  expect(await fixture(page)).toMatchObject({ offlineSales: 1, puts: 0 });
+});
+
+test("offline login cannot succeed when its audit event cannot be persisted", async ({ page, context }) => {
+  await context.addInitScript(() => {
+    const add = IDBObjectStore.prototype.add;
+    IDBObjectStore.prototype.add = function (...args) {
+      if (this.name === "login_events") throw new DOMException("Penyimpanan histori penuh", "QuotaExceededError");
+      return add.apply(this, args);
+    };
+  });
+  await ready(page, true);
+  await expect(page.locator("#notice")).toContainText("PIN offline siap");
+  await context.setOffline(true);
+  await enterOfflinePIN(page, "654321");
+  await expect(page.locator("#notice")).toContainText(/penyimpanan/i);
+  await expect(page.getByRole("button", { name: "Simpan penjualan tunai pending" })).toHaveCount(0);
+  expect(await stored(page, "login_events")).toHaveLength(0);
 });
