@@ -8,6 +8,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
     defaults:
       run:
         working-directory: backend
@@ -20,6 +22,17 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache: false
+      - name: Verify Go toolchain and scan dependencies
+        shell: bash
+        run: |
+          expected="go$(go list -m -f '{{.GoVersion}}')"
+          test "$(go env GOVERSION)" = "$expected"
+          scanner_dir="$RUNNER_TEMP/hi-ve-security-tools"
+          mkdir -p "$scanner_dir"
+          GOBIN="$scanner_dir" go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          go version "$scanner_dir/govulncheck"
+          test "$(go version "$scanner_dir/govulncheck" | awk '{print $NF}')" = "$expected"
+          "$scanner_dir/govulncheck" -show verbose ./...
       - name: Check formatting
         run: |
           unformatted=$(gofmt -l .)
