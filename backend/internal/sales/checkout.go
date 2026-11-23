@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -43,6 +44,7 @@ type Service struct {
 	Catalog        catalog.Service
 	Authorize      Authorize
 	IsPrimaryOwner ApprovalRole
+	OfflineFence   func(context.Context, pgx.Tx, string, string) error
 }
 
 type CheckoutItem struct {
@@ -107,6 +109,21 @@ func lockDocument(ctx context.Context, tx pgx.Tx, tenant, id string) error {
 }
 
 func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string, in CheckoutInput) (Sale, error) {
+	return s.checkout(ctx, tx, scope, id, in, false, nil)
+}
+
+func LockOfflineSaleID(ctx context.Context, tx pgx.Tx, tenant, id string) error {
+	return lockDocument(ctx, tx, tenant, id)
+}
+
+func (s Service) CheckoutOffline(ctx context.Context, tx pgx.Tx, scope Scope, id string, in CheckoutInput, historical *time.Time) (Sale, error) {
+	if in.Method != "cash" {
+		return Sale{}, ErrInput
+	}
+	return s.checkout(ctx, tx, scope, id, in, true, historical)
+}
+
+func (s Service) checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string, in CheckoutInput, fresh bool, historical *time.Time) (Sale, error) {
 	var result Sale
 	if !uuid.MatchString(id) || !validCheckout(in) {
 		return result, ErrInput
@@ -117,19 +134,16 @@ func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string
 	}
 	hash := sha256.Sum256(payload)
 	err = pgx.BeginFunc(ctx, tx, func(tx pgx.Tx) error {
-		if err := s.allowed(ctx, tx, scope, CheckoutPermission); err != nil {
+		if err := s.authorizeCheckout(ctx, tx, scope, in); err != nil {
 			return err
-		}
-		for _, item := range in.Items {
-			if strings.Trim(item.Discount, "0.") != "" {
-				if err := s.allowed(ctx, tx, scope, DiscountPermission); err != nil {
-					return err
-				}
-				break
-			}
 		}
 		if err := lockDocument(ctx, tx, scope.Tenant, id); err != nil {
 			return err
+		}
+		if !fresh && s.OfflineFence != nil {
+			if err := s.OfflineFence(ctx, tx, scope.Tenant, id); err != nil {
+				return err
+			}
 		}
 		var outlet, actor string
 		var previous []byte
@@ -137,7 +151,7 @@ func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string
 			scope.Tenant, id).Scan(&outlet, &actor, &previous)
 		switch {
 		case err == nil:
-			if actor != scope.Actor || outlet != scope.Outlet || !bytes.Equal(previous, hash[:]) {
+			if fresh || actor != scope.Actor || outlet != scope.Outlet || !bytes.Equal(previous, hash[:]) {
 				return ErrConflict
 			}
 			result, err = load(ctx, tx, scope, id)
@@ -153,7 +167,7 @@ func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string
 		if err != nil {
 			return err
 		}
-		plans, err := s.priceItems(ctx, tx, scope, in.Items)
+		plans, err := s.priceItems(ctx, tx, scope, in.Items, historical)
 		if err != nil {
 			return err
 		}
@@ -202,7 +216,7 @@ func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string
 	return result, nil
 }
 
-func (s Service) priceItems(ctx context.Context, tx pgx.Tx, scope Scope, items []CheckoutItem) ([]Item, error) {
+func (s Service) priceItems(ctx context.Context, tx pgx.Tx, scope Scope, items []CheckoutItem, historical *time.Time) ([]Item, error) {
 	// Acquire Catalog guards in stable SKU order while retaining caller line numbers.
 	order := make([]int, len(items))
 	for i := range order {
@@ -212,7 +226,7 @@ func (s Service) priceItems(ctx context.Context, tx pgx.Tx, scope Scope, items [
 	plans := make([]Item, len(items))
 	for _, i := range order {
 		item := items[i]
-		quote, err := s.Catalog.SellingPrice(ctx, tx, scope.Tenant, scope.Outlet, item.SKU)
+		quote, err := s.Catalog.SellingPriceAt(ctx, tx, scope.Tenant, scope.Outlet, item.SKU, historical)
 		if err != nil {
 			return nil, err
 		}
@@ -265,4 +279,107 @@ func (s Service) postInventorySale(ctx context.Context, tx pgx.Tx, scope Scope, 
 		return s.allowed(ctx, tx, scope, CheckoutPermission)
 	}}
 	return inv.PostSale(ctx, tx, stockScope, id, scope.Outlet, measures)
+}
+
+func (s Service) authorizeCheckout(ctx context.Context, tx pgx.Tx, scope Scope, in CheckoutInput) error {
+	if err := s.allowed(ctx, tx, scope, CheckoutPermission); err != nil {
+		return err
+	}
+	for _, item := range in.Items {
+		if strings.Trim(item.Discount, "0.") != "" {
+			if err := s.allowed(ctx, tx, scope, DiscountPermission); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	return nil
+}
+
+// ValidateOfflineCash validates evidence before it is admitted to the journal.
+func ValidateOfflineCash(in CheckoutInput) bool { return in.Method == "cash" && validCheckout(in) }
+
+func UsesDiscount(in CheckoutInput) bool {
+	for _, item := range in.Items {
+		if strings.Trim(item.Discount, "0.") != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidateOfflineQuotes(prices []string, count int) bool {
+	if len(prices) != count {
+		return false
+	}
+	for _, price := range prices {
+		if !validMoney(price) {
+			return false
+		}
+	}
+	return true
+}
+
+func SameOfflineMoney(a, b string) bool {
+	normalize := func(value string) string {
+		if strings.Contains(value, ".") {
+			return strings.TrimRight(strings.TrimRight(value, "0"), ".")
+		}
+		return value
+	}
+	return normalize(a) == normalize(b)
+}
+
+func MatchesOfflineQuotes(sale Sale, prices []string) bool {
+	if len(sale.Items) != len(prices) {
+		return false
+	}
+	for i, item := range sale.Items {
+		if !SameOfflineMoney(item.UnitPrice, prices[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func ValidOfflineRefund(value string) bool { return validMoney(value) && centAmount(value) }
+
+// VerifyOfflineRefundAmount bounds a recorded manual refund by the actual
+// signed checkout amount, after the original line discounts and SKU units.
+func VerifyOfflineRefundAmount(ctx context.Context, tx pgx.Tx, tenant string, in CheckoutInput, prices []string, refund string) error {
+	if !ValidateOfflineCash(in) || !ValidateOfflineQuotes(prices, len(in.Items)) || !ValidOfflineRefund(refund) {
+		return ErrInput
+	}
+	quantities, discounts := make([]string, len(in.Items)), make([]string, len(in.Items))
+	for i, item := range in.Items {
+		quantity, err := catalog.QuantityForEvidence(ctx, tx, tenant, item.SKU, item.Quantity, item.Unit)
+		if err != nil {
+			return err
+		}
+		quantities[i] = quantity
+		discounts[i] = item.Discount
+		if discounts[i] == "" {
+			discounts[i] = "0"
+		}
+	}
+	var allowed bool
+	err := tx.QueryRow(ctx, `SELECT $4::numeric>0 AND $4::numeric<=$5::numeric AND $4::numeric<=sum(net)
+        AND bool_and(net>=0 AND net=trunc(net,2)) FROM (
+        SELECT q::numeric*p::numeric-d::numeric AS net FROM unnest($1::text[],$2::text[],$3::text[]) AS lines(q,p,d)
+        ) priced`, quantities, prices, discounts, refund, *in.Tendered).Scan(&allowed)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrConflict
+	}
+	return nil
+}
+
+// OfflineOrderExists lets reconciliation distinguish an unposted checkout from
+// a real order, which must instead be handled by the Sales reversal workflow.
+func OfflineOrderExists(ctx context.Context, tx pgx.Tx, tenant, id string) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hive.sales_orders WHERE tenant_id=$1 AND id=$2)`, tenant, id).Scan(&exists)
+	return exists, err
 }

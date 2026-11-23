@@ -254,18 +254,31 @@ func (s Service) Check(ctx context.Context, tenant, capability string) error {
 // CheckWrite coordinates an authorized business write with revocation using only the grant row.
 // The caller must use this same transaction for the write and commit.
 func (s Service) CheckWrite(ctx context.Context, tx pgx.Tx, tenant, capability string) error {
+	_, err := s.CheckWriteSnapshot(ctx, tx, tenant, capability)
+	return err
+}
+
+type CapabilitySnapshot struct {
+	Revision int64
+	Expires  time.Time
+}
+
+// CheckWriteSnapshot reports the version and time boundary of the grant locked
+// until commit by this write transaction.
+func (s Service) CheckWriteSnapshot(ctx context.Context, tx pgx.Tx, tenant, capability string) (CapabilitySnapshot, error) {
+	var snapshot CapabilitySnapshot
 	if !grantable(capability) {
-		return ErrDenied
+		return snapshot, ErrDenied
 	}
-	var revision int64
-	err := tx.QueryRow(ctx, `SELECT revision FROM hive.tenant_entitlements WHERE tenant_id=$1 AND capability_id=$2 FOR SHARE`, tenant, capability).Scan(&revision)
+	err := tx.QueryRow(ctx, `SELECT revision,expires_at FROM hive.tenant_entitlements WHERE tenant_id=$1 AND capability_id=$2 FOR SHARE`, tenant, capability).
+		Scan(&snapshot.Revision, &snapshot.Expires)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrDenied
+		return snapshot, ErrDenied
 	}
 	if err != nil {
-		return err
+		return snapshot, err
 	}
-	return check(ctx, tx, tenant, capability)
+	return snapshot, check(ctx, tx, tenant, capability)
 }
 
 type queryer interface {

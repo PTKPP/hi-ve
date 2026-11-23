@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#16362f">
+  <title>Hi-Ve Kasir</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/hive-192.png">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/assets/app.mjs" type="module"></script>
+  <script src="/assets/owner-offline.mjs" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="/icons/hive-192.png" alt="" width="40" height="40"><span>Hi-Ve <strong>Kasir</strong></span></div>
+    <div class="tools"><button id="install" hidden>Pasang aplikasi</button><button id="reconnect">Periksa koneksi</button></div>
+  </header>
+  <main>
+    <section class="status-strip" aria-label="Status koneksi">
+      <dl><dt>Jaringan</dt><dd id="network">Memeriksa</dd></dl>
+      <dl><dt>API</dt><dd id="api">Belum diperiksa</dd></dl>
+      <dl><dt>WebSocket</dt><dd>Belum terhubung</dd></dl>
+      <dl><dt>Antrean</dt><dd id="sync-status">—</dd></dl>
+    </section>
+    <p id="notice" role="status" hidden></p>
+    <section id="setup" class="panel setup" hidden>
+      <h1>Pasangkan perangkat</h1>
+      <p>Minta Owner menyetujui kode dan menugaskan outlet untuk perangkat ini.</p>
+      <button id="pair-start" class="primary">Buat kode pairing</button>
+      <output id="pair-code"></output>
+      <form id="pair-redeem" hidden>
+        <label>ID tenant <input name="tenant" required autocomplete="off"></label>
+        <label>ID outlet <input name="outlet" required autocomplete="off"></label>
+        <button class="primary">Selesaikan pairing</button>
+      </form>
+    </section>
+    <section id="login" class="panel setup" hidden>
+      <h1>Masuk sebagai operator</h1>
+      <p>Masuk dengan PIN saat API tersedia.</p>
+      <button id="profiles" type="button">Muat profil</button>
+      <form id="pin-login">
+        <label>Operator <select name="member" required></select></label>
+        <label>PIN <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
+        <label id="offline-enroll" hidden><input type="checkbox" name="enroll" disabled> Siapkan PIN offline untuk perangkat ini</label>
+        <button class="primary">Masuk</button>
+      </form>
+    </section>
+    <section id="offline-unlock" class="panel setup" hidden>
+      <h1>Akses tunai offline</h1>
+      <form id="offline-login">
+        <label>PIN offline <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
+        <button class="primary">Buka kasir offline</button>
+      </form>
+    </section>
+    <section id="workspace" hidden>
+      <div class="workspace-head">
+        <div><h1>Penjualan</h1><p id="scope"></p></div>
+        <button id="logout">Kunci sesi</button>
+      </div>
+      <div class="register">
+        <section class="panel">
+          <h2>Cari produk</h2>
+          <form id="search" class="inline"><label class="grow">Nama, SKU, atau barcode <input name="query" type="search" maxlength="128" required autocomplete="off"></label><button class="primary">Cari</button></form>
+          <div id="products" class="result-list"></div>
+        </section>
+        <section class="panel cart">
+          <h2>Keranjang</h2>
+          <div id="cart"></div>
+          <form id="pay">
+            <label>Metode pembayaran <select name="method"><option value="cash">Tunai</option><option value="manual_non_cash">Nontunai manual</option></select></label>
+            <label id="tender-label">Uang diterima <input name="tendered" inputmode="decimal" autocomplete="off"></label>
+            <div class="total"><span>Total</span><output id="total">Rp 0,00</output></div>
+            <button id="checkout" class="primary">Checkout</button>
+            <button id="save-draft" type="button" hidden>Simpan draf tunai</button>
+          </form>
+        </section>
+      </div>
+      <section class="panel below">
+        <div class="section-header"><h2>Antrean transaksi</h2><button id="sync">Cek bukti server</button></div>
+        <p id="last-sync">Belum ada sinkronisasi.</p>
+        <div id="queue"></div>
+        <button id="seal" type="button" hidden>Ajukan penutupan jurnal kepada Owner</button>
+        <button id="persist" type="button">Minta penyimpanan persisten</button>
+      </section>
+      <section class="panel below">
+        <div class="section-header"><h2>Histori outlet</h2><button id="history">Muat histori</button></div>
+        <div id="history-list"></div>
+        <button id="history-more" hidden>Halaman berikutnya</button>
+      </section>
+    </section>
+    <details class="panel below" id="owner-offline">
+      <summary>Rekonsiliasi offline untuk Primary Owner</summary>
+      <form id="owner-journal-form">
+        <label>Tenant rekonsiliasi <input name="tenant" required autocomplete="off"></label>
+        <button name="action" value="review">Muat rekonsiliasi</button>
+        <button name="action" value="login">Masuk Google sebagai Owner</button>
+      </form>
+      <p id="owner-journal-status" role="status"></p>
+      <div id="owner-journal-results"></div>
+      <form id="owner-switch-form">
+        <label>ID perangkat <input name="device" required autocomplete="off"></label>
+        <button>Periksa outlet yang ditugaskan</button>
+      </form>
+      <div id="owner-switch-results"></div>
+    </details>
+    <section id="receipt" class="panel below" aria-label="Struk" hidden>
+      <div class="section-header"><h2>Struk</h2><button id="print">Cetak</button></div>
+      <div id="receipt-data"></div>
+    </section>
+  </main>
+</body>
+</html>

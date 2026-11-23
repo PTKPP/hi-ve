@@ -337,8 +337,14 @@ expect_sql hive_online_upgrade "$version" 36
 cp migrations/0{37..47}_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 47
+cp migrations/0{48..49}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 49
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.offline_leases" 0
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
+printf 'PASS: upgrade 049 to offline journals preserves existing Owner sessions\n'
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
     ON (n.tenant_id,n.location_id)=(l.tenant_id,l.id) WHERE l.code='existing' AND l.revision=0" 1
 printf 'PASS: upgrade from Phase 02 preserves outlet IDs and backfills their inventory mapping\n'

@@ -60,7 +60,17 @@ func (s Service) ProductSKU(ctx context.Context, tenant, token, id string) (SKU,
 // QuantityForSKU converts a measured decimal to the SKU unit within a protected posting.
 // Inventory owns the sign and posting rules for the resulting quantity.
 func QuantityForSKU(ctx context.Context, tx pgx.Tx, tenant, sku, quantity, from string) (string, error) {
-	row, err := SKUForOperation(ctx, tx, tenant, sku)
+	return quantityForSKU(ctx, tx, tenant, sku, quantity, from, true)
+}
+
+// QuantityForEvidence converts evidence using an immutable SKU unit, including
+// inactive SKUs. It grants no eligibility for a new posting.
+func QuantityForEvidence(ctx context.Context, tx pgx.Tx, tenant, sku, quantity, from string) (string, error) {
+	return quantityForSKU(ctx, tx, tenant, sku, quantity, from, false)
+}
+
+func quantityForSKU(ctx context.Context, tx pgx.Tx, tenant, sku, quantity, from string, activeOnly bool) (string, error) {
+	row, err := readSKU(ctx, tx, tenant, sku, activeOnly)
 	if err != nil {
 		return "", err
 	}

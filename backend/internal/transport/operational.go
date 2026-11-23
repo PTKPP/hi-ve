@@ -65,7 +65,10 @@ func (a API) useOperation(operation string) http.HandlerFunc {
 		}
 		switch operation {
 		case "state":
-			respond(w, 200, state)
+			respond(w, 200, struct {
+				devices.OperationalState
+				OfflineEnabled bool `json:"offline_enabled,omitempty"`
+			}{state, a.Offline.DB != nil})
 		case "context.read":
 			respond(w, 200, current)
 		case "context.logout":

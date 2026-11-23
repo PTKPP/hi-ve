@@ -106,6 +106,7 @@ func run(ctx context.Context) error {
 	if version >= 49 {
 		api.SalesDB = db
 	}
+	// Offline routes are wired only by disposable test fixtures until the Phase 08 rollout gate passes.
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
 		address = "127.0.0.1:8080"
