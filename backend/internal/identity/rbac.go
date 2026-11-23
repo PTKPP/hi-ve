@@ -378,3 +378,11 @@ func AuthorizeCatalogManagement(ctx context.Context, tx pgx.Tx, tenant, member s
 	}
 	return err
 }
+
+// AccessRevision lets a lease reject any intervening policy change. Normal
+// writes still use the targeted membership and role locks of authorization.
+func AccessRevision(ctx context.Context, tx pgx.Tx, tenant string) (int64, error) {
+	var revision int64
+	err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT revision FROM hive.tenant_rbac_revisions WHERE tenant_id=$1),0)`, tenant).Scan(&revision)
+	return revision, err
+}

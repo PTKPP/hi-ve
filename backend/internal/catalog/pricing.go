@@ -62,6 +62,12 @@ func (s Service) putPriceTx(ctx context.Context, tx pgx.Tx, tenant, actor, key, 
 // SellingPrice is for an authorized consumer using its backend-derived outlet.
 // The row lock orders the quote against both SKU deactivation and a new price version.
 func (s Service) SellingPrice(ctx context.Context, tx pgx.Tx, tenant, outlet, sku string) (Price, error) {
+	return s.SellingPriceAt(ctx, tx, tenant, outlet, sku, nil)
+}
+
+// SellingPriceAt chooses the immutable quote available at the claimed occurrence
+// for a manually reconciled transaction. Authorization is always evaluated now.
+func (s Service) SellingPriceAt(ctx context.Context, tx pgx.Tx, tenant, outlet, sku string, at *time.Time) (Price, error) {
 	if err := s.CheckCapability(ctx, tx, tenant, "catalog.pricing"); err != nil {
 		return Price{}, err
 	}
@@ -74,7 +80,8 @@ func (s Service) SellingPrice(ctx context.Context, tx pgx.Tx, tenant, outlet, sk
 	var p Price
 	err := tx.QueryRow(ctx, `SELECT id,amount::text,revision,updated_at FROM hive.catalog_prices
         WHERE tenant_id=$1 AND sku_id=$2 AND (outlet_id=$3 OR outlet_id IS NULL)
-        ORDER BY outlet_id NULLS LAST, revision DESC LIMIT 1`, tenant, sku, outlet).Scan(&p.ID, &p.Amount, &p.Revision, &p.Updated)
+        AND ($4::timestamptz IS NULL OR updated_at<=$4)
+        ORDER BY outlet_id NULLS LAST, revision DESC LIMIT 1`, tenant, sku, outlet, at).Scan(&p.ID, &p.Amount, &p.Revision, &p.Updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Price{}, ErrUnavailable
 	}

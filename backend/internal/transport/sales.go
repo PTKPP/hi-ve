@@ -149,6 +149,9 @@ func (a API) salesEndpoint(operator bool, command salesCommand) http.HandlerFunc
 				}
 				return a.Entitlements.CheckWrite(ctx, tx, tenant, capability)
 			}}
+			if a.Offline.DB != nil {
+				service.OfflineFence = a.Offline.ReservedSale
+			}
 			var err error
 			out, err = command(r, tx, scope, service)
 			return err

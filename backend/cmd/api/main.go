@@ -25,6 +25,7 @@ import (
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
+	"hi-ve/backend/internal/offline"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
 	"hi-ve/backend/internal/settings"
@@ -105,6 +106,9 @@ func run(ctx context.Context) error {
 	}
 	if version >= 49 {
 		api.SalesDB = db
+	}
+	if version >= 50 && staffPIN != nil {
+		api.Offline = offline.New(db, deviceService, api.Entitlements, api.Catalog, key)
 	}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {

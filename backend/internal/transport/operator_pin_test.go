@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +27,7 @@ import (
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/inventory"
 	"hi-ve/backend/internal/locations"
+	"hi-ve/backend/internal/offline"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/sales"
 )
@@ -83,6 +86,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	app.SalesDB = db
 	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
 	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
+	app.Offline = offline.New(db, svc, app.Entitlements, app.Catalog, key)
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
@@ -471,6 +475,213 @@ func TestOperatorPINPostgres(t *testing.T) {
 	ownerReturnPath := "/api/v1/app/tenants/" + tenant + "/locations/" + outlet + "/sales/" + saleID + "/returns/" + returnID + "/approve"
 	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, owner), 200)
 	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, foreign), 401)
+	t.Run("offline journal", func(t *testing.T) {
+		offlinePath := base(device) + "/offline"
+		ownerPath := "/api/v1/app/tenants/" + tenant + "/offline"
+		rev := previous.Revision
+		issue := func() *httptest.ResponseRecorder {
+			proof := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: previous.ID, Revision: &rev})
+			return send(handler, "POST", offlinePath+"/lease", proof, nil, cookies[0])
+		}
+		response := issue()
+		expectStatus(t, response, 200)
+		var signed offline.SignedLease
+		if err := json.Unmarshal(response.Body.Bytes(), &signed); err != nil {
+			t.Fatal(err)
+		}
+		pub, _ := base64.RawURLEncoding.DecodeString(signed.PublicKey)
+		sig, _ := base64.RawURLEncoding.DecodeString(signed.Signature)
+		if !ed25519.Verify(pub, []byte("hive.offline.lease.v1."+signed.Payload), sig) {
+			t.Fatal("invalid server lease signature")
+		}
+		var lease offline.Lease
+		decoded, _ := base64.RawURLEncoding.DecodeString(signed.Payload)
+		if err := json.Unmarshal(decoded, &lease); err != nil || lease.Operator != member || lease.Device != device || lease.Outlet != outlet ||
+			lease.ContextRevision != rev || lease.Expires.Sub(lease.Issued) > 24*time.Hour {
+			t.Fatal("bad lease scope", lease, err)
+		}
+		again := issue()
+		expectStatus(t, again, 200)
+		var repeated offline.SignedLease
+		if err := json.Unmarshal(again.Body.Bytes(), &repeated); err != nil || signed.Payload != repeated.Payload {
+			t.Fatal("retry extended lease", err)
+		}
+		prefix := offlinePath + "/leases/" + lease.ID
+		signedFor := func(kind, eachID string, body any) string {
+			raw, _ := json.Marshal(body)
+			digest := sha256.Sum256(raw)
+			return sign(map[string]string{"purpose": "hive.offline." + kind + ".v1", "tenant_id": tenant, "device_id": device,
+				"lease_id": lease.ID, "id": eachID, "digest": hex.EncodeToString(digest[:])})
+		}
+		pathFor := func(sale string) string { return prefix + "/sales/" + sale }
+		post := func(sale string, in offline.SaleInput) *httptest.ResponseRecorder {
+			return send(handler, "PUT", pathFor(sale), signedFor("sale", sale, in), in, nil)
+		}
+		newBatch := id("SELECT gen_random_uuid()")
+		recv := id("SELECT gen_random_uuid()")
+		if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+			scope := inventory.Scope{Tenant: tenant, Actor: ownerID}
+			draft := inventory.Receiving{Item: inventory.Measure{SKU: sku, Batch: newBatch, Quantity: "3", Unit: "g"}, Lot: "offline test", Origin: "fixture", ReceivedOn: "2026-01-01"}
+			if err := inventoryFixture.DraftReceiving(ctx, tx, scope, recv, outlet, draft); err != nil {
+				return err
+			}
+			return inventoryFixture.PostReceiving(ctx, tx, scope, recv, outlet)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		input := saleInput
+		input.Items = append([]sales.CheckoutItem(nil), saleInput.Items...)
+		input.Items[0].Batch = newBatch
+		packet := offline.SaleInput{Sequence: 1, Occurred: time.Now().UTC(), Checkout: input, Quotes: []string{"100"}}
+		queued := id("SELECT gen_random_uuid()")
+		proof := signedFor("sale", queued, packet)
+		expectStatus(t, send(handler, "PUT", pathFor(queued), "", packet, nil), 401)
+		expectStatus(t, send(handler, "PUT", strings.Replace(pathFor(queued), tenant, foreignTenant, 1), proof, packet, nil), 401)
+		concurrent := make(chan *httptest.ResponseRecorder, 2)
+		for range 2 {
+			go func() { concurrent <- send(handler, "PUT", pathFor(queued), proof, packet, nil) }()
+		}
+		for range 2 {
+			result := <-concurrent
+			expectStatus(t, result, 200)
+			var ack offline.Receipt
+			if err := json.Unmarshal(result.Body.Bytes(), &ack); err != nil || ack.State != "posted" || ack.Received.Before(packet.Occurred) {
+				t.Fatal(result.Body.String(), err)
+			}
+		}
+		if n := id(`SELECT count(*)::text FROM hive.inventory_postings WHERE tenant_id=$1 AND kind='sale' AND document_id=$2`, tenant, queued); n != "1" {
+			t.Fatal("offline replay duplicated ledger posting", n)
+		}
+
+		expectStatus(t, salesCall("PUT", salesPath+"/"+queued, input), 409)
+		changed := packet
+		changed.Quotes = []string{"99"}
+		expectStatus(t, post(queued, changed), 409)
+		shortage := id("SELECT gen_random_uuid()")
+		shortageBody := packet
+		shortageBody.Sequence = 2
+		shortageBody.Checkout.Items = append([]sales.CheckoutItem(nil), packet.Checkout.Items...)
+		shortageBody.Checkout.Items[0].Quantity = "3"
+		moreCash := "400"
+		shortageBody.Checkout.Tendered = &moreCash
+		denied := post(shortage, shortageBody)
+		expectStatus(t, denied, 200)
+		if !strings.Contains(denied.Body.String(), "stock_shortage") {
+			t.Fatal(denied.Body.String())
+		}
+		revoked := id("SELECT gen_random_uuid()")
+		next := packet
+		next.Sequence = 3
+		exec(`UPDATE hive.devices SET revoked_at=clock_timestamp() WHERE id=$1`, device)
+		res := post(revoked, next)
+		expectStatus(t, res, 200)
+		if !strings.Contains(res.Body.String(), "device_revoked") {
+			t.Fatal(res.Body.String())
+		}
+		exec(`UPDATE hive.devices SET revoked_at=NULL WHERE id=$1`, device)
+
+		expired := id("SELECT gen_random_uuid()")
+		next.Sequence = 5
+		next.Occurred = lease.Expires
+		res = post(expired, next)
+		expectStatus(t, res, 200)
+		if !strings.Contains(res.Body.String(), "lease_invalid") {
+			t.Fatal(res.Body.String())
+		}
+		next.Sequence = 6
+		next.Occurred = packet.Occurred
+		rollback := id("SELECT gen_random_uuid()")
+		exec(`ALTER TABLE hive.offline_sales ADD CONSTRAINT offline_test_fault CHECK (id<>'` + rollback + `') NOT VALID`)
+		expectStatus(t, post(rollback, next), 503)
+		if n := id(`SELECT count(*)::text FROM hive.sales_orders WHERE tenant_id=$1 AND id=$2`, tenant, rollback); n != "0" {
+			t.Fatal("offline rollback left sale", n)
+		}
+		exec(`ALTER TABLE hive.offline_sales DROP CONSTRAINT offline_test_fault`)
+		expectStatus(t, post(rollback, next), 200)
+		suspended := id("SELECT gen_random_uuid()")
+		next.Sequence = 4
+		exec(`UPDATE hive.tenants SET status='suspended' WHERE id=$1`, tenant)
+		res = post(suspended, next)
+		expectStatus(t, res, 200)
+		if !strings.Contains(res.Body.String(), "tenant_suspended") {
+			t.Fatal(res.Body.String())
+		}
+		exec(`UPDATE hive.tenants SET status='active' WHERE id=$1`, tenant)
+		auditID := id("SELECT gen_random_uuid()")
+		attempt := offline.LoginInput{Occurred: packet.Occurred, Outcome: "success"}
+		logPath := prefix + "/logins/" + auditID
+		logProof := signedFor("login", auditID, attempt)
+		exec(`ALTER TABLE hive.operator_login_history ADD CONSTRAINT offline_test_fault CHECK (attempt_id<>'` + auditID + `') NOT VALID`)
+		expectStatus(t, send(handler, "PUT", logPath, logProof, attempt, nil), 503)
+		exec(`ALTER TABLE hive.operator_login_history DROP CONSTRAINT offline_test_fault`)
+		for range 2 {
+			expectStatus(t, send(handler, "PUT", logPath, logProof, attempt, nil), 200)
+		}
+		if n := id(`SELECT count(*)::text FROM hive.operator_login_history WHERE tenant_id=$1 AND attempt_id=$2 AND offline_occurred_at IS NOT NULL`, tenant, auditID); n != "1" {
+			t.Fatal("login history dedup", n)
+		}
+		expectStatus(t, accessRequest(handler, "GET", ownerPath+"/review", appOrigin, "", nil, foreign), 401)
+		expectStatus(t, accessRequest(handler, "GET", ownerPath+"/review", appOrigin, "", nil, owner), 200)
+		end := offline.SealInput{Count: 6}
+		expectStatus(t, send(handler, "PUT", prefix+"/seal", signedFor("seal", lease.ID, end), end, nil), 204)
+		switchPath := ownerPath + "/devices/" + device + "/outlet"
+		expectStatus(t, accessRequest(handler, "PUT", switchPath, appOrigin, "", map[string]any{"outlet_id": otherOutlet, "expected_revision": rev}, owner), 409)
+		closePath := ownerPath + "/leases/" + lease.ID + "/close"
+		requestClose := offline.CloseInput{Reason: "Review uji"}
+		expectStatus(t, accessRequest(handler, "PUT", closePath, appOrigin, "", requestClose, owner), 409)
+		refund := offline.Resolution{Decision: "manual_refund_recorded", Reason: "Pelanggan dikembalikan tunai", Reference: "refund-test", Refund: "100.00"}
+		excess := refund
+		excess.Refund = "101.00"
+		expectStatus(t, accessRequest(handler, "PUT", ownerPath+"/sales/"+revoked+"/resolution", appOrigin, "", excess, owner), 409)
+		for _, sale := range []string{shortage, revoked, suspended, expired} {
+			resolution := ownerPath + "/sales/" + sale + "/resolution"
+			expectStatus(t, accessRequest(handler, "PUT", resolution, appOrigin, "", refund, owner), 204)
+			expectStatus(t, accessRequest(handler, "PUT", resolution, appOrigin, "", refund, owner), 204)
+		}
+		expectStatus(t, accessRequest(handler, "PUT", closePath, appOrigin, "", requestClose, owner), 204)
+		expectStatus(t, accessRequest(handler, "PUT", closePath, appOrigin, "", requestClose, owner), 204)
+		untouched := makeDevice("offline-switch-fence")
+		emptySwitch := ownerPath + "/devices/" + untouched + "/outlet"
+		expectStatus(t, accessRequest(handler, "GET", emptySwitch, appOrigin, "", nil, foreign), 401)
+		expectStatus(t, accessRequest(handler, "GET", emptySwitch, appOrigin, "", nil, owner), 200)
+		cmd := map[string]any{"outlet_id": otherOutlet, "expected_revision": 0}
+		expectStatus(t, accessRequest(handler, "PUT", emptySwitch, appOrigin, "", cmd, owner), 200)
+		expectStatus(t, accessRequest(handler, "PUT", emptySwitch, appOrigin, "", cmd, owner), 200)
+		if state := id(`SELECT last_outlet_id::text||':'||context_revision FROM hive.devices WHERE id=$1`, untouched); state != otherOutlet+":1" {
+			t.Fatal("outlet switch did not fence context", state)
+		}
+		orphan := id(`INSERT INTO hive.offline_leases(tenant_id,device_id,outlet_id,operator_id,context_id,
+            device_revision,context_revision,credential_revision,discount_allowed,tenant_epoch,rbac_revision,transactions_revision,payments_revision,issued_at,expires_at)
+            SELECT tenant_id,$3,$4,operator_id,gen_random_uuid(),device_revision,1,credential_revision,
+            discount_allowed,tenant_epoch,rbac_revision,transactions_revision,payments_revision,issued_at,expires_at
+            FROM hive.offline_leases WHERE tenant_id=$1 AND id=$2 RETURNING id`, tenant, lease.ID, untouched, otherOutlet)
+		lostPath := ownerPath + "/leases/" + orphan + "/close"
+		lost := offline.CloseInput{Lost: true, Reason: "Perangkat hilang. Bukti lokal tidak dapat dipulihkan."}
+		expectStatus(t, accessRequest(handler, "PUT", lostPath, appOrigin, "", lost, owner), 409)
+		revokePath := "/api/v1/app/tenants/" + tenant + "/devices/" + untouched + "/revoke"
+		expectStatus(t, accessRequest(handler, "POST", revokePath, appOrigin, "offline-test-revoke", map[string]int64{"expected_revision": 1}, owner), 200)
+		expectStatus(t, accessRequest(handler, "PUT", lostPath, appOrigin, "", lost, owner), 204)
+		expectStatus(t, accessRequest(handler, "PUT", lostPath, appOrigin, "", lost, owner), 204)
+		if n := id(`SELECT count(*)::text FROM hive.offline_control_audit WHERE tenant_id=$1 AND lease_id=$2 AND action='lease.lost'`, tenant, orphan); n != "1" {
+			t.Fatal("lost device was not audited exactly once", n)
+		}
+
+		lateID := id("SELECT gen_random_uuid()")
+		next.Sequence = 7
+		res = post(lateID, next)
+		expectStatus(t, res, 200)
+		if !strings.Contains(res.Body.String(), "tenant_suspended") {
+			t.Fatal("suspend restored the old lease", res.Body.String())
+		}
+
+		if n := id(`SELECT count(*)::text FROM hive.sales_orders WHERE tenant_id=$1 AND id IN ($2,$3,$4,$5)`, tenant, shortage, revoked, suspended, expired); n != "0" {
+			t.Fatal("quarantine posted stock", n)
+		}
+		if n := id(`SELECT count(*)::text FROM hive.offline_control_audit WHERE tenant_id=$1 AND lease_id=$2`, tenant, lease.ID); n != "1" {
+			t.Fatal("closure audit replay", n)
+		}
+	})
+
 	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='sales.checkout.post'`, tenant, approvalRole)
 	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 403)
 	expectStatus(t, salesCall("POST", ackPath, saleInput), 403)

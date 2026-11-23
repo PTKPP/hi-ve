@@ -23,6 +23,7 @@ import (
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
 	"hi-ve/backend/internal/locations"
+	"hi-ve/backend/internal/offline"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
 	"hi-ve/backend/internal/settings"
@@ -46,6 +47,7 @@ type Google interface {
 }
 
 type API struct {
+	Offline                offline.Service
 	SalesDB                *pgxpool.Pool
 	InventoryDB            *pgxpool.Pool
 	Catalog                catalog.Service
@@ -75,6 +77,7 @@ func (a API) Handler() http.Handler {
 	a.catalogRoutes(mux)
 	a.inventoryRoutes(mux)
 	a.salesRoutes(mux)
+	a.offlineRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
 	a.operationalRoutes(mux)

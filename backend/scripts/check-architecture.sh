@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-# The Platform registry is the only production domain package today.
+# The canonical Platform registry has no production dependency outside the standard library.
 # Private implementation packages belong under their owner's nested internal/.
 # Go's loader enforces that visibility and rejects import cycles.
 dependencies=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./internal/platform)
@@ -20,13 +20,17 @@ awk '
     $2 !~ /^hi-ve\/backend\// { next }
     $1 == "hi-ve/backend/cmd/audit-retention" && $2 == "hi-ve/backend/internal/audit" { next }
     $1 == "hi-ve/backend/cmd/api" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|offline|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|sales|settings|platform\/(entitlements|provisioning))$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|offline|sales|settings|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
     $1 == "hi-ve/backend/internal/platform/entitlements" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit|platform)$/ { next }
+    # Offline calls public domain contracts. Inventory and Locations provide
+    # typed denials, while Sales owns the actual posting path.
+    $1 == "hi-ve/backend/internal/offline" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|platform\/entitlements|sales)$/ { next }
     $1 == "hi-ve/backend/internal/sales" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|inventory|locations|settings)$/ { next }
     $1 == "hi-ve/backend/internal/inventory" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|locations)$/ { next }
     $1 == "hi-ve/backend/internal/devices" && $2 == "hi-ve/backend/internal/identity" { next }
