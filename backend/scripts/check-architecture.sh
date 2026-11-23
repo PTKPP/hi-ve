@@ -22,11 +22,12 @@ awk '
     $1 == "hi-ve/backend/cmd/api" &&
         $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|settings|platform\/(entitlements|provisioning))$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|sales|settings|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
     $1 == "hi-ve/backend/internal/platform/entitlements" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit|platform)$/ { next }
+    $1 == "hi-ve/backend/internal/sales" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|inventory|locations|settings)$/ { next }
     $1 == "hi-ve/backend/internal/inventory" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|locations)$/ { next }
     $1 == "hi-ve/backend/internal/devices" && $2 == "hi-ve/backend/internal/identity" { next }
     $1 ~ /^hi-ve\/backend\/internal\/(devices|locations|settings)$/ && $2 == "hi-ve/backend/internal/audit" { next }

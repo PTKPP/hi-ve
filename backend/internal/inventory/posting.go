@@ -97,3 +97,9 @@ func (s Service) PostSale(ctx context.Context, tx pgx.Tx, scope Scope, document,
 		return apply(ctx, tx, scope.Tenant, "sale", document, moves)
 	})
 }
+
+// ValidateSaleBatch verifies stock lineage for checkout, including orders still
+// awaiting a manual payment confirmation.
+func ValidateSaleBatch(ctx context.Context, tx pgx.Tx, tenant string, item Measure) error {
+	return ensureBatch(ctx, tx, tenant, item)
+}
