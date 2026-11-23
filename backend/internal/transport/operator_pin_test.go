@@ -26,12 +26,13 @@ import (
 	"hi-ve/backend/internal/inventory"
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
+	"hi-ve/backend/internal/sales"
 )
 
 func TestOperatorPINPostgres(t *testing.T) {
 	db := disposableDatabase(t)
 	ctx := t.Context()
-	tenant, _, owner := ownerSessionFixture(t, db, "operator-pin-owner")
+	tenant, ownerID, owner := ownerSessionFixture(t, db, "operator-pin-owner")
 	foreignTenant, _, foreign := ownerSessionFixture(t, db, "operator-pin-foreign")
 	exec := func(q string, args ...any) {
 		t.Helper()
@@ -66,7 +67,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	role := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'operator','Operator') RETURNING id`, tenant)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
-	svc := devices.Service{DB: db, CatalogCommands: true, InventoryCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
+	svc := devices.Service{DB: db, CatalogCommands: true, InventoryCommands: true, SalesCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
 		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true}
 	newPIN := func() *identity.PIN {
 		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
@@ -79,6 +80,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
 	app.AdminOrigin = adminOrigin
 	app.InventoryDB = db
+	app.SalesDB = db
 	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
 	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
@@ -111,7 +113,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 		req := httptest.NewRequest(method, path, bytes.NewReader(data))
 		req.Header.Set("Origin", appOrigin)
 		req.Header.Set("Device-Proof", proof)
-		if method == "PUT" || strings.Contains(path, "/inventory/") {
+		if method == "PUT" || strings.Contains(path, "/inventory/") || strings.Contains(path, "/sales") {
 			req.Header.Set("Idempotency-Key", "staff-catalog-command-01")
 		}
 		if session != nil {
@@ -373,6 +375,56 @@ func TestOperatorPINPostgres(t *testing.T) {
 	if count := id(`SELECT count(*)::text FROM hive.inventory_approvals WHERE tenant_id=$1 AND document_id=$2`, tenant, transferID); count != "0" {
 		t.Fatal("quick transfer required a second approval")
 	}
+
+	// The Sales API uses backend outlet scope and live RBAC even on retries.
+	salesPath := base(device) + "/locations/" + outlet + "/sales"
+	saleID := id("SELECT gen_random_uuid()")
+	salePrice := id(`SELECT id FROM hive.catalog_prices WHERE tenant_id=$1 AND sku_id=$2 AND outlet_id=$3`, tenant, sku, outlet)
+	saleBatch := id("SELECT gen_random_uuid()")
+	inventoryFixture := inventory.Service{Authorize: func(context.Context, pgx.Tx, inventory.Scope, string, string) error { return nil }}
+	receiptID := id("SELECT gen_random_uuid()")
+	if err := pgx.BeginFunc(ctx, db, func(tx pgx.Tx) error {
+		scope := inventory.Scope{Tenant: tenant, Actor: ownerID}
+		draft := inventory.Receiving{Item: inventory.Measure{SKU: sku, Batch: saleBatch, Quantity: "1", Unit: "g"}, Lot: "sale fixture", Origin: "fixture", ReceivedOn: "2026-01-01"}
+		if err := inventoryFixture.DraftReceiving(ctx, tx, scope, receiptID, outlet, draft); err != nil {
+			return err
+		}
+		return inventoryFixture.PostReceiving(ctx, tx, scope, receiptID, outlet)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	exec(`INSERT INTO hive.tenant_entitlements
+        SELECT $1,cap,now(),now()+interval '1 day','fixture',NULL,1 FROM unnest(ARRAY['sales.transactions','sales.payments','sales.history','sales.returns']) cap`, tenant)
+	tendered := "200"
+	saleInput := sales.CheckoutInput{Method: "cash", Tendered: &tendered, Items: []sales.CheckoutItem{
+		{Measure: inventory.Measure{SKU: sku, Batch: saleBatch, Quantity: "1", Unit: "g"}, PriceID: salePrice},
+	}}
+	salesCall := func(method, path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		digest := commandDigest(method, path, "staff-catalog-command-01", raw)
+		proof := challenge(device, devices.OperationTarget{Operation: "sales.write", ContextID: previous.ID, Revision: &previous.Revision, CommandDigest: digest})
+		return send(handler, method, path, proof, body, cookies[0])
+	}
+	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'sales.checkout.post'),($1,$2,'sales.history.read'),
+        ($1,$2,'sales.returns.create')`, tenant, approvalRole)
+	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 200)
+	anotherSalesPath := base(device) + "/locations/" + otherOutlet + "/sales"
+	expectStatus(t, salesCall("PUT", anotherSalesPath+"/"+saleID, saleInput), 403)
+	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 200)
+	returnID := id("SELECT gen_random_uuid()")
+	returnPath := salesPath + "/" + saleID + "/returns/" + returnID
+	saleable := false
+	expectStatus(t, salesCall("PUT", returnPath, sales.ReversalInput{Reason: "returned damaged",
+		Items: []sales.ReturnItem{{Line: 1, Quantity: "1", Saleable: &saleable}}}), 200)
+	expectStatus(t, salesCall("POST", returnPath+"/approve", reason), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'sales.returns.approve')`, tenant, approvalRole)
+	expectStatus(t, salesCall("POST", returnPath+"/approve", reason), 403)
+	ownerReturnPath := "/api/v1/app/tenants/" + tenant + "/locations/" + outlet + "/sales/" + saleID + "/returns/" + returnID + "/approve"
+	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, owner), 200)
+	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, foreign), 401)
+	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='sales.checkout.post'`, tenant, approvalRole)
+	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 403)
 
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)

@@ -173,3 +173,15 @@ func TenantLocationIDs(ctx context.Context, tx pgx.Tx, tenant string, ids []stri
 	}
 	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
+
+// OutletLabel returns the historical display label to snapshot while keeping an
+// active outlet and tenant eligible for posting through commit.
+func OutletLabel(ctx context.Context, tx pgx.Tx, tenant, outlet string) (string, error) {
+	var label string
+	err := tx.QueryRow(ctx, `SELECT l.name FROM hive.locations l JOIN hive.active_tenants t ON t.id=l.tenant_id
+        WHERE l.tenant_id=$1 AND l.id=$2 AND l.kind='outlet' AND l.status='active' FOR SHARE OF l,t`, tenant, outlet).Scan(&label)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrOutletUnavailable
+	}
+	return label, err
+}

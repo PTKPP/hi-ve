@@ -5,7 +5,7 @@ Penomoran fase mengikuti urutan engineering dari audit sesuai arahan pengguna. P
 
 ## Checkpoint aktif
 
-**Phase 00–02 selesai · Phase 03 selesai · Phase 04 lulus Final Audit.** PR #3 sudah merged di `96c930f0e712e1277c27c9e9df0af1168ecdd6e8`. Implementasi Catalog dan Locations berada di `feat/phase-03-catalog`. [Draft PR #10](https://github.com/PTKPP/hi-ve/pull/10) · [Kontrak dan API](backend/docs/CATALOG_LOCATIONS.md)
+**Phase 00–02 selesai · Phase 03 selesai · Phase 04 selesai · Phase 05 selesai untuk scope backend online.** PR #3 sudah merged di `96c930f0e712e1277c27c9e9df0af1168ecdd6e8`. Implementasi Catalog dan Locations berada di `feat/phase-03-catalog`. [Draft PR #10](https://github.com/PTKPP/hi-ve/pull/10) · [Kontrak dan API](backend/docs/CATALOG_LOCATIONS.md)
 
 ## Audit dan exit Phase 00
 
@@ -27,9 +27,9 @@ Gate di kolom exit adalah bukti yang harus tersedia pada akhir fase. Semua gate 
 | 01 · COMPLETED | Fondasi Go, registry canonical, migrasi PostgreSQL, integration environment disposable, dan batas paket. Entry 00 PASS, toolchain tersedia, ID lengkap dan stabil (CAP-01–05/18/23/47) | Build dan regresi registry lulus, batas dependensi teruji, migrasi lulus pada database baru dan upgrade dari baseline termasuk retry, concurrency dan rollback. Workflow aktual lulus pada commit foundation | PR #1 merged dan hasil merge terverifikasi |
 | 02 · COMPLETED | Platform, Identity, Locations Foundation, Devices, Settings dan Audit online sesuai 02.35 | Final Audit 02.36 PASS pada PostgreSQL disposable dan CI | PR #3 merged pada `96c930f` |
 | 03 · COMPLETED | Catalog, fitur Locations lanjutan dengan ID foundation yang sama, harga per outlet dan konteks stok. Entry 02 PASS dan kontrak SKU/unit/harga per tenant direview | Unik per tenant, SKU nonaktif tetap ada dalam histori, harga historis stabil, kg↔g dan L↔mL tepat, guard lokasi dan biaya diuji | PR #10 merged pada `ac1356f` |
-| 04 · COMPLETED | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | Review merge PR #11 berdasarkan Final Audit 04.8 |
-| 05 · MENUNGGU 04 | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | Telusuri FR-POS/RET dan FR-HV-RCP-001, tes dua checkout berebut stok terakhir |
-| 06 · MENUNGGU 05 | Hi-Ve App PWA, penjualan tunai offline dan antrean audit login. Entry 05 PASS dan kebijakan offline terkait direview | UAT-05–07, retry/restart, shortage, revoke/suspend/expiry, storage loss, hapus antrean hanya setelah ACK persistensi. Operasi inventori sensitif hanya online | Selesaikan OPEN-001/007/008/013 untuk skenario terdampak lalu uji di browser/perangkat |
+| 04 · COMPLETED | Inventory online. Entry 03 PASS dan kontrak posting/approval yang dipakai disepakati | Ledger, saldo dan batch konsisten pada retry, rollback, posting bersamaan, transit/parsial, receiving, repacking, adjustment dan opname. Uji efek Inventory dari UAT-01–04/09 pada DB disposable | PR #11 merged pada `8530b2c` |
+| 05 · COMPLETED | Sales online, pembayaran manual, histori, retur/void, struk. Entry 04 PASS dan kontrak atomik Sales–Inventory tersedia | Checkout + posting stok dalam satu transaksi PostgreSQL, tidak ada double-sell, rollback utuh, retur/void terlacak, snapshot struk dan field biaya sesuai hak | Review merge Draft PR Phase 05 berdasarkan Final Audit 05.4 |
+| 06 · MENUNGGU ENTRY | Hi-Ve App PWA, penjualan tunai offline dan antrean audit login. Entry 05 PASS dan kebijakan offline terkait direview | UAT-05–07, retry/restart, shortage, revoke/suspend/expiry, storage loss, hapus antrean hanya setelah ACK persistensi. Operasi inventori sensitif hanya online | Selesaikan OPEN-001/007/008/013 untuk skenario terdampak lalu uji di browser/perangkat |
 | 07 · MENUNGGU 06 | Reports, Realtime dan integrasi tiga frontend. Entry 06 PASS, kontrak proyeksi dan payload berizin tersedia | Omzet UAT-10 benar, pending terpisah, event setelah commit, deduplikasi/reconnect, akses HPP diuji di API/report/export/cache/log/event. Build dan routing frontend static-only diverifikasi | Tetapkan dataset laporan dan observasi rollback/disconnect. Tahan hasil margin/valuasi sampai OPEN-002 selesai |
 | 08 · MENUNGGU 07 | Acceptance pilot, reliability dan kesiapan rilis. Entry 07 PASS, target uji, perangkat pilot dan lingkungan tersedia | Semua AC P0 final dan skenario kritis lulus, UAT-01–10 serta UAT-HV terkait, restore terbukti, NFR-01–14/PM-01–06 diukur, temuan kritis ditutup. Rekam keputusan go/no-go | Jalankan matriks Functional Spec §9 dan PRD §08. Verifikasi konfigurasi Cloudflare/VPS aktual dan otorisasi target sebelum rilis |
 
@@ -483,6 +483,32 @@ OPEN-002 dan OPEN-014 tetap terbuka. Checkout, snapshot harga dan alur finansial
 **PARTIAL lintas phase.** Costing, HPP dan bahan penunjang mengikuti OPEN-002/014. Checkout dan pembalikan finansial mengikuti Phase 05, sinkronisasi offline Phase 06, dan pelaporan lintas domain Phase 07. Risiko residual mencakup urutan lock saat Sales memakai kontrak posting dan durasi validasi constraint pada volume target.
 
 **GO untuk review merge Phase 04 setelah checks HEAD lulus.** PR #11 tetap Draft. [Draft PR #11](https://github.com/PTKPP/hi-ve/pull/11)
+
+## Phase 05 · Sales
+
+Entry PASS. PR #11 dan security PR #13 terverifikasi merged ke `main`. Branch `feat/phase-05-sales` memakai `9bbf49202a39b2871aabe624c225e9f2c682fb31` dengan Go 1.27.4, go-jose v4.1.9, x/crypto v0.59.0 dan Govulncheck di CI. Schema disposable 048–049 di atas 047. Compose development maksimum 028.
+
+| Increment | Scope dan prasyarat |
+|---|---|
+| 05.1 · FR-POS-01/02, FR-STK-03 | Checkout backend dengan proof perangkat, grant outlet, snapshot harga versi Catalog, diskon per item, dan posting atomik ke Inventory. Uji retry, stale quote, cash, rollback dan perebutan stok. |
+| 05.2 · FR-POS-02/03, FR-HV-RCP-001 | Pembayaran manual memerlukan attestation. Pending tidak mendebit stok. Status, kembalian, histori keyset dan snapshot struk terpisah dari informasi Confidential. |
+| 05.3 · FR-RET-01/02 | Baseline OPEN-003 Sales disetujui. Request dan approval terpisah. Approver Owner atau staf dengan grant outlet eksplisit. Self-approval staf ditolak. Alasan wajib untuk self-approval Owner dan seluruh request. Void setelah retur terposting ditolak. Refund kumulatif berdasarkan nilai bersih asli, floor pada minor unit IDR, dan sisa pembulatan pada retur terakhir. Konfirmasi refund manual dicatat terpisah. [Issue #14](https://github.com/PTKPP/hi-ve/issues/14) |
+
+OPEN-002/014 tetap terbuka. UI PWA, struk offline dan sinkronisasi mengikuti Phase 06. Proyeksi laporan dan distribusi realtime mengikuti phase integrasi berikutnya. [Kontrak Sales](backend/docs/SALES.md)
+
+## Increment 05.4 · Final Audit Phase 05
+
+| Exit gate | Hasil PostgreSQL disposable dan regresi |
+|---|---|
+| Checkout dan Inventory atomik | **PASS**. Snapshot versi harga, diskon, total dan kembalian benar. Dua checkout bersaing untuk stok terakhir. Replay checkout mengembalikan dokumen yang sama dan quote lama ditolak untuk transaksi baru. |
+| Pembayaran dan struk | **PASS**. Pembayaran manual pending tidak memutasi stok. Konfirmasi konkuren menghasilkan satu posting. Struk menyimpan footer dan harga asal setelah konfigurasi berubah. Proyeksi tidak memuat HPP, margin atau valuasi. |
+| Histori dan isolasi | **PASS**. Riwayat terfilter dan cursor keyset teruji. Database menolak perubahan transaksi. Operator terikat outlet aktif, sesi perangkat dan grant eksplisit. |
+| Retur, void, refund dan audit | **PASS**. Request terpisah dari approval. Simulasi staf tanpa grant, self-approval dan revoke ditolak. Refund 0.10 untuk tiga unit menghasilkan 0.03, 0.03, 0.04. Approval/retry unik, over-return dan void setelah retur ditolak. Kegagalan ledger membatalkan approval serta refund. |
+| Migrasi dan baseline keamanan | **PASS lokal**. Fresh, retry, upgrade 047→049, rehearsal M5, build, vet, race, guard arsitektur dan preflight 028. Govulncheck Go 1.27.4 tidak menemukan kerentanan pada paket yang dipindai. |
+
+**PARTIAL lintas phase.** Status pending offline, UI kasir, browser printing dan sinkronisasi mengikuti Phase 06. Laporan, proyeksi finansial lintas transaksi dan distribusi realtime mengikuti Phase 07. OPEN-002/014 tetap berlaku. Diskon checkout didukung per item. Fitur diskon tingkat transaksi berada di luar increment ini. Pembulatan refund memakai minor unit IDR dua desimal dan format uang tanpa floating point.
+
+**GO untuk review merge setelah CI push dan PR lulus pada HEAD yang sama.** Bukti endpoint dan keputusan tercatat di kontrak Sales dan Issue #14. [CI branch](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-05-sales)
 
 ## Riwayat checkpoint
 

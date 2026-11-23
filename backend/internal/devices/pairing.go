@@ -35,6 +35,7 @@ var (
 type Service struct {
 	CatalogCommands    bool
 	InventoryCommands  bool
+	SalesCommands      bool
 	DB                 *pgxpool.Pool
 	PIN                *identity.PIN
 	PINContextSchema   bool

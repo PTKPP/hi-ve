@@ -202,7 +202,7 @@ const bootstrapLifetime = 30 * time.Second
 func (s Service) StartOperation(ctx context.Context, tenant, device string, peer netip.Addr, target OperationTarget, proof string) (OperationChallenge, error) {
 	var result OperationChallenge
 	valid := validOperationTarget(target, s.PIN != nil)
-	if !valid || target.Operation == "catalog.products.write" && !s.CatalogCommands || target.Operation == "inventory.write" && !s.InventoryCommands || !peer.IsValid() {
+	if !valid || target.Operation == "catalog.products.write" && !s.CatalogCommands || target.Operation == "inventory.write" && !s.InventoryCommands || target.Operation == "sales.write" && !s.SalesCommands || !peer.IsValid() {
 		return result, ErrInput
 	}
 	if proof == "" || len(proof) > 2048 {
@@ -353,7 +353,7 @@ func (s Service) CatalogCommand(ctx context.Context, tenant, device, proof, toke
 	return err
 }
 func isBoundCommand(operation string) bool {
-	return operation == "catalog.products.write" || operation == "inventory.write"
+	return operation == "catalog.products.write" || operation == "inventory.write" || operation == "sales.write"
 }
 
 func (s Service) InventoryCommand(ctx context.Context, tenant, device, proof, token, digest string, apply func(pgx.Tx, OperationalContext) error) error {
@@ -361,6 +361,14 @@ func (s Service) InventoryCommand(ctx context.Context, tenant, device, proof, to
 		return ErrInput
 	}
 	_, _, err := s.useOperation(ctx, tenant, device, "inventory.write", proof, token, digest, apply)
+	return err
+}
+
+func (s Service) SalesCommand(ctx context.Context, tenant, device, proof, token, digest string, apply func(pgx.Tx, OperationalContext) error) error {
+	if !s.SalesCommands || apply == nil || !commandHash.MatchString(digest) {
+		return ErrInput
+	}
+	_, _, err := s.useOperation(ctx, tenant, device, "sales.write", proof, token, digest, apply)
 	return err
 }
 
@@ -494,7 +502,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 				return err
 			}
 			return audit.RecordDeviceContext(ctx, tx, tenant, device, current.Member, "context.logout", current.Revision, current.ID, current.Outlet, nil)
-		case "context.read", "catalog.products.write", "inventory.write":
+		case "context.read", "catalog.products.write", "inventory.write", "sales.write":
 			err = tx.QueryRow(ctx, `UPDATE hive.operational_contexts SET idle_expires_at=LEAST(expires_at,clock_timestamp()+interval '15 minutes')
 				WHERE tenant_id=$1 AND device_id=$2 AND id=$3 AND idle_expires_at>clock_timestamp() RETURNING idle_expires_at`,
 				tenant, device, current.ID).Scan(&current.IdleExpiresAt)

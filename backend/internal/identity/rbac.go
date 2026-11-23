@@ -31,6 +31,7 @@ var (
 )
 
 type RBAC struct {
+	SalesActions           bool
 	InventoryActions       bool
 	LockInventoryLocations func(context.Context, pgx.Tx, string, []string) (bool, error)
 	CatalogProducts        bool

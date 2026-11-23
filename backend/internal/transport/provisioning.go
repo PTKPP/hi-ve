@@ -46,6 +46,7 @@ type Google interface {
 }
 
 type API struct {
+	SalesDB                *pgxpool.Pool
 	InventoryDB            *pgxpool.Pool
 	Catalog                catalog.Service
 	Provisioning           provisioning.Service
@@ -73,6 +74,7 @@ func (a API) Handler() http.Handler {
 	a.locationRoutes(mux)
 	a.catalogRoutes(mux)
 	a.inventoryRoutes(mux)
+	a.salesRoutes(mux)
 	a.logoutRoutes(mux)
 	a.deviceRoutes(mux)
 	a.operationalRoutes(mux)

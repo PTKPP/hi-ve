@@ -77,7 +77,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return errors.New("Google OIDC discovery unavailable")
 	}
-	deviceService := devices.Service{DB: db, CatalogCommands: version >= 42, InventoryCommands: version >= 47, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
+	deviceService := devices.Service{DB: db, CatalogCommands: version >= 42, InventoryCommands: version >= 47, SalesCommands: version >= 49, CodeKey: codeKey, PreviousCodeKey: previousCodeKey, RateKey: key,
 		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets,
 		LockOperatorMember: identity.LockOperatorMember, AuthorizeOperator: identity.AuthorizeDeviceOperator}
 	staffPIN, err := configuredPIN(db, key, version, deviceService)
@@ -93,7 +93,7 @@ func run(ctx context.Context) error {
 		AccessControlAudit: audit.AccessControlReader{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, TenantLocationIDs: locations.TenantLocationIDs},
 		Devices:            deviceService,
 		Settings:           settings.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner},
-		Locations:          locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, StaffPINSchema: version >= 31, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, CatalogProducts: version >= 42, InventoryActions: version >= 47, LockInventoryLocations: locations.LockActiveInventoryLocations, CatalogPrices: version >= 41, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
+		Locations:          locations.Service{DB: db, FingerprintKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}, Memberships: identity.MembershipLifecycle{DB: db, StaffPINSchema: version >= 31, FingerprintKey: key, RemoveOperatorAccess: deviceService.RemoveOperatorAccess}, Entitlements: entitlements.Service{DB: db, FingerprintKey: key}, TenantRBAC: identity.RBAC{DB: db, CatalogProducts: version >= 42, InventoryActions: version >= 47, SalesActions: version >= 49, LockInventoryLocations: locations.LockActiveInventoryLocations, CatalogPrices: version >= 41, FingerprintKey: key, LockOutlets: locations.LockActiveOutlets}, Google: google, AdminOrigin: admin, AppOrigin: app, Deliver: deliver}
 	if version >= 40 {
 		api.Locations.EndOutletContexts = deviceService.EndOutletContexts
 	}
@@ -102,6 +102,9 @@ func run(ctx context.Context) error {
 	}
 	if version >= 47 {
 		api.InventoryDB = db
+	}
+	if version >= 49 {
+		api.SalesDB = db
 	}
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {

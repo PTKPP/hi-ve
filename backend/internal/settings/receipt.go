@@ -115,3 +115,13 @@ func (s Service) ReplaceReceipt(ctx context.Context, tenant, token, key string, 
 	})
 	return result, err
 }
+
+// ReceiptFooter snapshots tenant-owned receipt settings in a business transaction.
+func ReceiptFooter(ctx context.Context, tx pgx.Tx, tenant string) (*string, error) {
+	var footer *string
+	err := tx.QueryRow(ctx, `SELECT receipt_footer FROM hive.tenant_receipt_settings WHERE tenant_id=$1`, tenant).Scan(&footer)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return footer, err
+}

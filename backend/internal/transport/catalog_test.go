@@ -135,7 +135,7 @@ func TestCatalogPostgres(t *testing.T) {
 	if err := json.Unmarshal(history.Body.Bytes(), &versions); err != nil || len(versions.Prices) != 1 || versions.Prices[0].ID != original.ID {
 		t.Fatal("history cursor", err)
 	}
-	for _, q := range []string{"UPDATE hive.catalog_prices SET amount=0", "DELETE FROM hive.catalog_prices", "TRUNCATE hive.catalog_prices"} {
+	for _, q := range []string{"UPDATE hive.catalog_prices SET amount=0", "DELETE FROM hive.catalog_prices", "TRUNCATE hive.catalog_prices CASCADE"} {
 		_, err := db.Exec(ctx, q)
 		var pgerr *pgconn.PgError
 		if !errors.As(err, &pgerr) || pgerr.Code != "42501" {

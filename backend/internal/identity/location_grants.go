@@ -45,7 +45,7 @@ func lockLocationMember(ctx context.Context, tx pgx.Tx, tenant, member string, e
 
 // AuthorizeLocationGrant checks the exact grant after locking its membership and supporting roles.
 func AuthorizeLocationGrant(ctx context.Context, tx pgx.Tx, tenant, member, location, action string) error {
-	if action != DeviceOperatorUse && action != CatalogPriceRead && !IsInventoryLocationAction(action) {
+	if action != DeviceOperatorUse && action != CatalogPriceRead && !IsInventoryLocationAction(action) && !IsSalesLocationAction(action) {
 		return ErrForbidden
 	}
 	if err := lockLocationMember(ctx, tx, tenant, member, false); err != nil {
@@ -78,7 +78,7 @@ func (s RBAC) LocationActions(ctx context.Context, tenant, token, target, key st
 	actions = slices.Clone(actions)
 	slices.Sort(actions)
 	for i, action := range actions {
-		if (action != DeviceOperatorUse && !(s.CatalogPrices && action == CatalogPriceRead) && !(s.InventoryActions && IsInventoryLocationAction(action))) || (i > 0 && actions[i-1] == action) {
+		if (action != DeviceOperatorUse && !(s.CatalogPrices && action == CatalogPriceRead) && !(s.InventoryActions && IsInventoryLocationAction(action)) && !(s.SalesActions && IsSalesLocationAction(action))) || (i > 0 && actions[i-1] == action) {
 			return LocationPolicy[string]{}, ErrRBACInput
 		}
 	}
@@ -277,6 +277,16 @@ func IsInventoryLocationAction(action string) bool {
 		"inventory.stock_count.create",
 		"inventory.stock_count.observe",
 		"inventory.stock_count.approve":
+		return true
+	default:
+		return false
+	}
+}
+
+func IsSalesLocationAction(action string) bool {
+	switch action {
+	case "sales.checkout.post", "sales.transactions.discount", "sales.payments.confirm", "sales.history.read", "sales.receipts.read", "sales.cashier.search",
+		"sales.returns.create", "sales.returns.approve", "sales.voids.create", "sales.voids.approve", "sales.payments.refund_confirm":
 		return true
 	default:
 		return false

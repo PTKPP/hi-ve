@@ -334,11 +334,17 @@ expect_sql hive_online_upgrade "$version" 29
 cp migrations/0{30..36}_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 36
+cp migrations/0{37..47}_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 47
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
     ON (n.tenant_id,n.location_id)=(l.tenant_id,l.id) WHERE l.code='existing' AND l.revision=0" 1
 printf 'PASS: upgrade from Phase 02 preserves outlet IDs and backfills their inventory mapping\n'
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.sales_orders" 0
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.sales_reversal_requests" 0
+printf 'PASS: upgrade from Phase 04 introduces empty Sales tables and preserves Inventory mapping\n'
 legacy_fk="SELECT count(*) FROM pg_constraint WHERE conrelid='hive.tenant_memberships'::regclass
     AND conname='tenant_memberships_principal_id_fkey'"
 expect_sql hive_online_upgrade "$legacy_fk" 0
@@ -349,4 +355,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
