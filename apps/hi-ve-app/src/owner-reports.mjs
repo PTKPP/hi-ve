@@ -1,0 +1,274 @@
+import { request } from "./api.mjs";
+import { apiOrigin } from "./config.mjs";
+import { readMeta } from "./storage.mjs";
+
+const $ = id => document.getElementById(id);
+const connect = $("report-connect"), filters = $("report-filter");
+const datasets = {
+  dashboard: ["reports.dashboard", "Dashboard omzet"],
+  sales: ["reports.sales", "Penjualan dan pembayaran"],
+  inventory: ["reports.inventory", "Saldo stok dan batch"],
+  movements: ["reports.stock_movements", "Mutasi dan repacking"],
+  transfers: ["reports.stock_movements", "Transfer dan discrepancy"],
+};
+const metrics = {
+  gross: "Bruto", discount: "Diskon", returns: "Retur", voids: "Void", net: "Neto",
+  received: "Pembayaran tercatat", pending: "Pembayaran pending", refund_recorded: "Refund tercatat",
+};
+const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+const reconnectDelay = 5000;
+let workspace, generation = 0;
+
+function element(tag, text) {
+  const item = document.createElement(tag);
+  if (text !== undefined) item.textContent = text;
+  return item;
+}
+function message(text) { $("report-message").textContent = text; }
+function wsState(text) { $("realtime-state").textContent = text; }
+
+function act(work) {
+  return async event => {
+    event.preventDefault();
+    try { await work(event); }
+    catch (error) {
+      if ([401, 403].includes(error.status)) {
+        closeWorkspace();
+        message("Sesi Google Owner atau hak laporan tidak tersedia.");
+      } else message(error.status ? "Server tidak dapat memuat laporan." : error.message);
+    }
+  };
+}
+function closeWorkspace() {
+  generation++;
+  if (workspace) {
+    workspace.socket?.close();
+    clearTimeout(workspace.retry);
+    clearInterval(workspace.poll);
+  }
+  workspace = undefined;
+  wsState("Belum terhubung");
+  filters.hidden = true;
+  for (const id of ["report-data", "report-detail", "report-notice"]) $(id).replaceChildren();
+  $("report-next").hidden = true;
+}
+function dateValue(date) {
+  return [date.getFullYear(), String(date.getMonth() + 1).padStart(2,"0"), String(date.getDate()).padStart(2,"0")].join("-");
+}
+function setPreset() {
+  const today = new Date();
+  if (filters.elements.range.value === "Kemarin") today.setDate(today.getDate() - 1);
+  if (filters.elements.range.value !== "Rentang tanggal") {
+    filters.elements.from.value = dateValue(today);
+    filters.elements.through.value = dateValue(today);
+  }
+}
+function query(kind) {
+  const q = new URLSearchParams();
+  const fields = filters.elements;
+  if (kind !== "inventory") {
+    const from = new Date(fields.from.value + "T00:00:00");
+    const to = new Date(fields.through.value + "T00:00:00");
+    if (!Number.isFinite(+from) || !Number.isFinite(+to) || from > to) throw new Error("Pilih rentang tanggal yang sah.");
+    to.setDate(to.getDate() + 1);
+    q.set("from", from.toISOString());
+    q.set("to", to.toISOString());
+  }
+  const keys = ["location", ...(["movements","inventory"].includes(kind) ? ["sku"] : []), ...(kind === "movements" ? ["actor","movement"] : [])];
+  for (const key of keys) if (fields[key].value.trim()) q.set(key,fields[key].value.trim());
+  return q;
+}
+function table(labels, values) {
+  const wrapper = element("div");
+  wrapper.className = "report-scroll";
+  const result = element("table");
+  const heading = element("tr");
+  labels.forEach(label => heading.append(element("th", label)));
+  const head = element("thead");
+  head.append(heading);
+  result.append(head);
+  const body = element("tbody");
+  for (const cells of values) {
+    const row = element("tr");
+    for (const value of cells) {
+      const cell = element("td");
+      if (value instanceof Element) cell.append(value);
+      else cell.textContent = value ?? "";
+      row.append(cell);
+    }
+    body.append(row);
+  }
+  result.append(body);
+  wrapper.append(result);
+  return wrapper;
+}
+
+const columns = {
+  inventory: { location_id:"Lokasi", sku_id:"SKU", batch_id:"Batch", lot:"Lot", bucket:"Bucket", quantity:"Kuantitas" },
+  movements: { posted_at:"Waktu", kind:"Operasi", document_id:"Dokumen", location_id:"Lokasi", sku_id:"SKU", batch_id:"Batch", source_batch_id:"Batch asal", bucket:"Bucket", quantity_delta:"Perubahan", actor_id:"Operator" },
+  transfers: { id:"Transfer", source_location_id:"Asal", destination_location_id:"Tujuan", dispatched:"Dikirim", received:"Diterima", transit:"Transit", discrepancy:"Selisih" },
+};
+
+function render(current,data) {
+  const root = $("report-data");
+  root.replaceChildren();
+  if (current.kind === "dashboard") {
+    root.append(element("p", "Diperbarui " + new Date(data.updated_at).toLocaleString("id-ID")),
+      table(["Outlet", "Metode", ...Object.values(metrics)], [
+        ["Gabungan", "Semua", ...Object.keys(metrics).map(key => data.total[key])],
+        ...data.groups.map(g => {
+          let outlet = g.outlet_name;
+          if (!g.method && current.caps.includes("reports.sales")) {
+            outlet = element("button",g.outlet_name);
+            outlet.addEventListener("click",act(async () => {
+              filters.elements.kind.value = current.kind = "sales";
+              filters.elements.location.value = g.outlet_id;
+              current.query = query(current.kind);
+              $("report-export").hidden=false;
+              await load(current);
+            }));
+          }
+          return [outlet,g.method || "Semua",...Object.keys(metrics).map(key=>g[key])];
+        }),
+      ]));
+  } else if (current.kind === "sales") {
+    const sales = data.rows.map(row => {
+      const detail = element("button", "Lihat " + row.id.slice(0,8));
+      detail.addEventListener("click", act(async () => {
+        const out = await request(current.base + "/reports/sales/" + row.id + "?location=" + row.outlet_id);
+        if(workspace !== current) return;
+        $("report-detail").replaceChildren(element("h3", "Transaksi " + out.id),
+          table(["Item","Jumlah","Harga jual","Diskon","Neto"],
+            out.items.map(item => [item.name,item.quantity+" "+item.unit,item.unit_price,item.discount,item.net])));
+      }));
+      return [detail,row.outlet_id,new Date(row.created_at).toLocaleString("id-ID"),row.method,row.payment_state,...Object.keys(metrics).map(key=>row[key])];
+    });
+    root.append(table(["Transaksi","Outlet","Waktu","Metode","Status",...Object.values(metrics)],sales));
+  } else {
+    const names = columns[current.kind];
+    root.append(table(Object.values(names), data.rows.map(row => Object.keys(names).map(key => row[key]))));
+  }
+  $("report-next").hidden = !data.next_cursor;
+  current.next = data.next_cursor;
+}
+
+async function load(current, cursor = "") {
+  const requestID = ++current.requestID;
+  const kind = current.kind;
+  const q = new URLSearchParams(current.query);
+  if(cursor) q.set("cursor",cursor);
+  const data = await request(current.base + "/reports/" + kind + "?" + q);
+  if (workspace !== current || requestID !== current.requestID) return;
+  current.cursorForExport = cursor;
+  render(current,data);
+  message("");
+}
+
+function acceptFeed(current,feed) {
+  if (workspace !== current || !/^[0-9]+$/.test(feed.cursor)) return;
+  if (current.cursor && BigInt(feed.cursor) < BigInt(current.cursor)) return;
+  current.cursor = feed.cursor;
+  current.notifications = feed.sale_notifications === true;
+  syncPreference(current);
+  if (!feed.events.length) return;
+  let notified = 0, changed = false;
+  for (const event of feed.events) {
+    if (!/^[0-9]+$/.test(event.id) || BigInt(event.id) <= current.lastNotice) continue;
+    current.lastNotice = BigInt(event.id);
+    changed = true;
+    if (current.notifications && event.kind === "sale.received") notified++;
+  }
+  if (notified) $("report-notice").textContent = `${notified} penjualan diterima server.`;
+  if (changed && (current.kind === "dashboard" || current.kind === "sales")) void load(current).catch(() => {});
+}
+
+function syncPreference(current) {
+  $("report-preference").textContent = current.notifications ? "Matikan notifikasi di aplikasi" : "Aktifkan notifikasi di aplikasi";
+}
+const position = current => current.cursor ? "?after=" + current.cursor : "";
+function socket(current) {
+  if (workspace !== current) return;
+  const url = new URL((apiOrigin || window.location.origin) + current.base + "/realtime/socket" + position(current));
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  try { current.socket = new WebSocket(url); } catch { wsState("Polling"); return; }
+  current.socket.addEventListener("open", () => {
+    if(workspace !== current) return;
+    wsState("Terhubung");
+    if(current.kind === "dashboard" || current.kind === "sales") void load(current).catch(() => {});
+  });
+  current.socket.addEventListener("message", incoming => {
+    try { acceptFeed(current,JSON.parse(incoming.data)); } catch { current.socket.close(); }
+  });
+  current.socket.addEventListener("close", () => {
+    if(workspace !== current) return;
+    wsState("Polling · menyambung ulang");
+    current.retry = setTimeout(() => socket(current),reconnectDelay);
+  });
+}
+
+connect.addEventListener("submit",act(async () => {
+  closeWorkspace();
+  const expected = generation;
+  const tenant = connect.elements.tenant.value.trim();
+  if (!uuid.test(tenant)) throw new Error("ID tenant laporan tidak sah.");
+  const base = "/api/v1/app/tenants/" + tenant;
+  const caps = await request(base + "/reports/capabilities");
+  if (expected !== generation) return;
+  const options = Object.entries(datasets).filter(([, [cap]]) => caps.includes(cap));
+  if (!options.length) {message("Tenant belum memiliki entitlement laporan."); return;}
+  const current = {base,caps,kind:options[0][0],requestID:0,lastNotice:0n};
+  workspace = current;
+  filters.elements.kind.replaceChildren(...options.map(([kind, [,label]]) => {
+    const opt = element("option",label); opt.value=kind;return opt;
+  }));
+  filters.hidden = false;
+  $("report-export").hidden = current.kind === "dashboard";
+  $("report-preference").hidden = !caps.includes("realtime.notifications") || !caps.includes("realtime.events");
+  setPreset();
+  current.query = query(current.kind);
+  await load(current);
+  if (!caps.includes("realtime.events")) return;
+  acceptFeed(current,await request(base + "/realtime/events"));
+  socket(current);
+  current.poll = setInterval(async () => {
+    if (workspace !== current || document.hidden || current.socket?.readyState === WebSocket.OPEN) return;
+    try {
+      acceptFeed(current,await request(base + "/realtime/events" + position(current)));
+      if (current.kind === "dashboard" || current.kind === "sales") await load(current);
+    } catch (error) {
+      if ([401,403].includes(error.status)) {closeWorkspace();message("Akses laporan perlu dimuat ulang.");}
+    }
+  },7000);
+}));
+filters.elements.range.addEventListener("change",setPreset);
+filters.addEventListener("submit",act(async () => {
+  const current=workspace;
+  current.kind=filters.elements.kind.value;
+  current.query=query(current.kind);
+  $("report-detail").replaceChildren();
+  $("report-export").hidden=current.kind==="dashboard";
+  await load(current);
+}));
+$("report-next").addEventListener("click",act(() => load(workspace,workspace.next)));
+$("report-export").addEventListener("click",act(async () => {
+  const current=workspace;
+  const q = new URLSearchParams(current.query);
+  if(current.cursorForExport) q.set("cursor",current.cursorForExport);
+  q.set("format","csv");
+  const response=await fetch(apiOrigin+current.base+"/reports/"+current.kind+"?"+q,{credentials:"include",cache:"no-store",redirect:"error"});
+  if(!response.ok) throw Object.assign(new Error("Ekspor gagal"),{status:response.status});
+  const url=URL.createObjectURL(await response.blob());
+  const download=element("a");
+  download.href=url;
+  download.download="hi-ve-report.csv";
+  download.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}));
+$("report-preference").addEventListener("click",act(async () => {
+  const current=workspace, value = !current.notifications;
+  await request(current.base + "/realtime/preferences",{method:"PUT",body:JSON.stringify({sale_notifications:value})});
+  current.notifications=value;
+  syncPreference(current);
+}));
+$("owner-reports").addEventListener("toggle",event => {if(!event.currentTarget.open) closeWorkspace();});
+readMeta("installation").then(info=>{if(info&&!connect.elements.tenant.value) connect.elements.tenant.value=info.tenant;}).catch(()=>{});

@@ -21,8 +21,9 @@ await mkdir(output, { recursive: true });
 await cp(new URL("public/", root), output, { recursive: true });
 await cp(new URL("src/", root), new URL("assets/", output), { recursive: true });
 await writeFile(new URL("assets/config.mjs", output), `export const apiOrigin = ${JSON.stringify(origin)};\n`);
+const socketOrigin = origin.replace(/^http/, "ws");
 await writeFile(new URL("_headers", output), `/*
-  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src 'self'${origin ? " " + origin : ""}; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; manifest-src 'self'; connect-src 'self'${origin ? " " + origin + " " + socketOrigin : ""}; worker-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
   Referrer-Policy: no-referrer
   X-Content-Type-Options: nosniff
 /sw.js

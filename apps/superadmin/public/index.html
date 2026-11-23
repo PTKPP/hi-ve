@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Hi-Ve Superadmin</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/assets/admin.mjs" type="module"></script>
+</head>
+<body>
+<main>
+  <header><h1>Hi-Ve Superadmin</h1><div><button id="login">Masuk Google</button> <button id="logout">Keluar</button></div></header>
+  <p id="notice" role="status"></p>
+  <section>
+    <h2>Direktori tenant</h2>
+    <button id="directory">Muat tenant</button>
+    <ul id="tenants"></ul>
+    <button id="directory-next" hidden>Tenant berikutnya</button>
+  </section>
+  <section>
+    <h2>Provisioning</h2>
+    <form data-operation="create">
+      <label>Nama tenant <input name="display_name" required maxlength="120"></label>
+      <label>Email Primary Owner <input name="owner_contact_email" type="email" required></label>
+      <button>Buat tenant dan kirim undangan</button>
+    </form>
+    <form data-operation="activate">
+      <label>ID claim Owner <input name="owner_claim_id" required></label>
+      <label>Referensi verifikasi organisasi <input name="verification_reference" required maxlength="128"></label>
+      <button>Aktifkan tenant</button>
+    </form>
+    <button id="reissue">Kirim ulang undangan Owner</button>
+  </section>
+  <section>
+    <h2>Tenant yang dikelola</h2>
+    <label>ID tenant <input id="tenant" autocomplete="off"></label>
+    <h3>Entitlement</h3>
+    <label>Capability <input id="capability" autocomplete="off" placeholder="reports.dashboard"></label>
+    <button id="read-entitlement">Periksa entitlement</button>
+    <form data-operation="grant">
+      <label>Waktu efektif <input type="datetime-local" name="effective_at" required></label>
+      <label>Kedaluwarsa <input type="datetime-local" name="expires_at" required></label>
+      <label>Referensi <input name="source_reference" required maxlength="128"></label>
+      <label>Revision <input type="number" min="0" name="revision" value="0" required></label>
+      <button>Simpan grant</button>
+    </form>
+    <form data-operation="revoke">
+      <label>Kode alasan <input name="reason_code" required></label>
+      <label>Revision revoke <input type="number" min="1" name="revision" required></label>
+      <button>Cabut grant</button>
+    </form>
+    <pre id="entitlement"></pre>
+    <h3>Audit provisioning</h3>
+    <button id="audit">Muat audit tenant</button>
+    <ul id="audit-events"></ul>
+    <button id="audit-next" hidden>Audit berikutnya</button>
+  </section>
+  <section><h2>Pengaturan global</h2><p>Key yang dapat dikelola belum disetujui.</p></section>
+</main>
+</body>
+</html>

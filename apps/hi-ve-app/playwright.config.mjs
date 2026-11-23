@@ -7,5 +7,5 @@ export default defineConfig({
   timeout: 45000,
   globalTimeout: 300000,
   use: { baseURL: "http://127.0.0.1:4179", viewport: { width: 390, height: 844 } },
-  webServer: { command: "npm run build && node test/browser-server.mjs", url: "http://127.0.0.1:4179", reuseExistingServer: false }
+  webServer: { command: "npm run build && node ../scripts/build-static.mjs && node test/browser-server.mjs", url: "http://127.0.0.1:4179", reuseExistingServer: false }
 });
