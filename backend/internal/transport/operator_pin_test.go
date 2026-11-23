@@ -9,18 +9,21 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"hi-ve/backend/internal/audit"
 	"hi-ve/backend/internal/catalog"
 	"hi-ve/backend/internal/devices"
 	"hi-ve/backend/internal/identity"
+	"hi-ve/backend/internal/inventory"
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
 )
@@ -63,7 +66,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	role := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'operator','Operator') RETURNING id`, tenant)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
-	svc := devices.Service{DB: db, CatalogCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
+	svc := devices.Service{DB: db, CatalogCommands: true, InventoryCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
 		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true}
 	newPIN := func() *identity.PIN {
 		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
@@ -75,6 +78,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	svc.PIN = newPIN()
 	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
 	app.AdminOrigin = adminOrigin
+	app.InventoryDB = db
 	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
 	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
@@ -107,7 +111,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 		req := httptest.NewRequest(method, path, bytes.NewReader(data))
 		req.Header.Set("Origin", appOrigin)
 		req.Header.Set("Device-Proof", proof)
-		if method == "PUT" {
+		if method == "PUT" || strings.Contains(path, "/inventory/") {
 			req.Header.Set("Idempotency-Key", "staff-catalog-command-01")
 		}
 		if session != nil {
@@ -306,6 +310,69 @@ func TestOperatorPINPostgres(t *testing.T) {
 	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 200)
 	exec(`DELETE FROM hive.tenant_role_assignments WHERE tenant_id=$1 AND principal_id=$2 AND role_id=$3`, tenant, member, role)
 	expectStatus(t, send(handler, "PUT", staffPath, command(), body, cookies[0]), 403)
+
+	// Approval uses a live location grant, separate from the operator session.
+	inventoryPath := base(device) + "/locations/" + outlet + "/inventory/adjustments/"
+	adjustmentID := id("SELECT gen_random_uuid()")
+	ownAdjustmentID := id("SELECT gen_random_uuid()")
+	ownerAdjustment := "/api/v1/app/tenants/" + tenant + "/locations/" + outlet + "/inventory/adjustments/" + adjustmentID
+	batch := id(`INSERT INTO hive.inventory_batches(tenant_id,id,sku_id,lot_code,origin,received_on)
+        VALUES($1,gen_random_uuid(),$2,'fixture','fixture',current_date) RETURNING id`, tenant, sku)
+	adjustment := inventory.Adjustment{Item: inventory.Measure{SKU: sku, Batch: batch, Quantity: "1", Unit: "g"}, Reason: "verified gain"}
+	exec(`INSERT INTO hive.tenant_entitlements VALUES($1,'inventory.adjustment',now(),now()+interval '1 day','fixture',NULL,1)`, tenant)
+	expectStatus(t, accessRequest(handler, "PUT", ownerAdjustment, appOrigin, "", adjustment, owner), 204)
+	inventoryCall := func(method, path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		digest := commandDigest(method, path, "staff-catalog-command-01", raw)
+		proof := challenge(device, devices.OperationTarget{Operation: "inventory.write", ContextID: previous.ID, Revision: &previous.Revision, CommandDigest: digest})
+		return send(handler, method, path, proof, body, cookies[0])
+	}
+	reason := map[string]string{"reason": "checked adjustment"}
+	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 403)
+	approvalRole := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'inventory-approver','Inventory approver') RETURNING id`, tenant)
+	rbac := identity.RBAC{DB: db, FingerprintKey: key, InventoryActions: true, LockOutlets: locations.LockActiveOutlets,
+		LockInventoryLocations: locations.LockActiveInventoryLocations}
+	grantRevision := int64(0)
+	actions, err := rbac.LocationActions(ctx, tenant, owner.Value, approvalRole, "inventory-actions-grant", &grantRevision,
+		[]string{inventory.AdjustmentApprovePermission, inventory.AdjustmentDraftPermission})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assigned, err := rbac.LocationAssignments(ctx, tenant, owner.Value, member, "inventory-scope-grant", &actions.Revision,
+		[]identity.LocationAssignment{{Role: role, Location: outlet}, {Role: role, Location: otherOutlet}, {Role: approvalRole, Location: outlet}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongLocation := base(device) + "/locations/" + otherOutlet + "/inventory/adjustments/" + adjustmentID + "/approve"
+	expectStatus(t, inventoryCall("POST", wrongLocation, reason), 403)
+	expectStatus(t, inventoryCall("PUT", inventoryPath+ownAdjustmentID, adjustment), 204)
+	expectStatus(t, inventoryCall("POST", inventoryPath+ownAdjustmentID+"/approve", reason), 403)
+	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 204)
+	if auditDevice := id(`SELECT device_id FROM hive.inventory_postings WHERE tenant_id=$1 AND kind='adjustment' AND document_id=$2`, tenant, adjustmentID); auditDevice != device {
+		t.Fatal("approval device was not recorded")
+	}
+
+	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 204)
+	if _, err = rbac.LocationActions(ctx, tenant, owner.Value, approvalRole, "inventory-approval-revoke", &assigned.Revision,
+		[]string{inventory.AdjustmentDraftPermission}); err != nil {
+		t.Fatal(err)
+	}
+	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 403)
+
+	// Quick transfer requires the special action at both ends and no second approval.
+	exec(`INSERT INTO hive.tenant_entitlements VALUES($1,'inventory.transfer',now(),now()+interval '1 day','fixture',NULL,1)`, tenant)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'inventory.transfer.create'),($1,$3,'inventory.transfer.quick')`, tenant, role, approvalRole)
+	transferID := id("SELECT gen_random_uuid()")
+	transferPath := base(device) + "/locations/" + outlet + "/inventory/transfers/" + transferID
+	transfer := inventory.Transfer{Destination: otherOutlet, Item: adjustment.Item, Quick: true}
+	expectStatus(t, inventoryCall("PUT", transferPath, transfer), 204)
+	expectStatus(t, inventoryCall("POST", transferPath+"/dispatch", nil), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'inventory.transfer.quick')`, tenant, role)
+	expectStatus(t, inventoryCall("POST", transferPath+"/dispatch", nil), 204)
+	expectStatus(t, inventoryCall("POST", transferPath+"/dispatch", nil), 204)
+	if count := id(`SELECT count(*)::text FROM hive.inventory_approvals WHERE tenant_id=$1 AND document_id=$2`, tenant, transferID); count != "0" {
+		t.Fatal("quick transfer required a second approval")
+	}
 
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)

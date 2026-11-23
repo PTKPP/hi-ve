@@ -202,7 +202,7 @@ const bootstrapLifetime = 30 * time.Second
 func (s Service) StartOperation(ctx context.Context, tenant, device string, peer netip.Addr, target OperationTarget, proof string) (OperationChallenge, error) {
 	var result OperationChallenge
 	valid := validOperationTarget(target, s.PIN != nil)
-	if !valid || target.Operation == "catalog.products.write" && !s.CatalogCommands || !peer.IsValid() {
+	if !valid || target.Operation == "catalog.products.write" && !s.CatalogCommands || target.Operation == "inventory.write" && !s.InventoryCommands || !peer.IsValid() {
 		return result, ErrInput
 	}
 	if proof == "" || len(proof) > 2048 {
@@ -299,7 +299,7 @@ func (s Service) StartOperation(ctx context.Context, tenant, device string, peer
                 WHERE $10::timestamptz>clock_timestamp() RETURNING id,expires_at`,
 				tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.Revision, target.Outlet, target.Member, target.After, bootstrapExpiresAt).
 				Scan(&result.ID, &result.ExpiresAt)
-		} else if target.Operation == "catalog.products.write" {
+		} else if isBoundCommand(target.Operation) {
 			err = tx.QueryRow(ctx, `INSERT INTO hive.device_operation_challenges(tenant_id,device_id,nonce,device_revision,operation,context_id,context_revision,command_digest)
                 SELECT $1,$2,$3,$4,$5,$6,$7,$8 WHERE $9::timestamptz>clock_timestamp() RETURNING id,expires_at`, tenant, device, result.Nonce, result.DeviceRevision, target.Operation, target.ContextID, target.Revision, target.CommandDigest, bootstrapExpiresAt).Scan(&result.ID, &result.ExpiresAt)
 		} else {
@@ -352,6 +352,18 @@ func (s Service) CatalogCommand(ctx context.Context, tenant, device, proof, toke
 	_, _, err := s.useOperation(ctx, tenant, device, "catalog.products.write", proof, token, digest, apply)
 	return err
 }
+func isBoundCommand(operation string) bool {
+	return operation == "catalog.products.write" || operation == "inventory.write"
+}
+
+func (s Service) InventoryCommand(ctx context.Context, tenant, device, proof, token, digest string, apply func(pgx.Tx, OperationalContext) error) error {
+	if !s.InventoryCommands || apply == nil || !commandHash.MatchString(digest) {
+		return ErrInput
+	}
+	_, _, err := s.useOperation(ctx, tenant, device, "inventory.write", proof, token, digest, apply)
+	return err
+}
+
 func (s Service) useOperation(ctx context.Context, tenant, device, operation, proof, token, digestHex string, read func(pgx.Tx, OperationalContext) error) (OperationalState, OperationalContext, error) {
 	var state OperationalState
 	var current OperationalContext
@@ -374,7 +386,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 	}
 	digest := sha256.Sum256([]byte(token))
 	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		if operation == "context.read" || operation == "catalog.products.write" {
+		if operation == "context.read" || isBoundCommand(operation) {
 			err := tx.QueryRow(ctx, `SELECT member_id,outlet_id FROM hive.operational_contexts
 				WHERE tenant_id=$1 AND device_id=$2 AND id=$3 AND digest=$4`, tenant, device, claims.ContextID, digest[:]).Scan(&current.Member, &current.Outlet)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -420,7 +432,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 		if revision != claims.DeviceRevision {
 			return ErrProof
 		}
-		if operation == "context.read" || operation == "catalog.products.write" {
+		if operation == "context.read" || isBoundCommand(operation) {
 			valid, err := s.LockOutlets(ctx, tx, tenant, []string{current.Outlet})
 			if err != nil {
 				return err
@@ -442,7 +454,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 			if err != nil {
 				return err
 			}
-			if operation == "context.read" || operation == "catalog.products.write" {
+			if operation == "context.read" || isBoundCommand(operation) {
 				var assigned bool
 				err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM hive.device_operator_assignments
 					WHERE tenant_id=$1 AND device_id=$2 AND outlet_id=$3 AND member_id=$4)`, tenant, device, current.Outlet, current.Member).Scan(&assigned)
@@ -454,7 +466,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 				}
 			}
 		}
-		if operation == "catalog.products.write" {
+		if isBoundCommand(operation) {
 			var bound string
 			err := tx.QueryRow(ctx, `SELECT command_digest FROM hive.device_operation_challenges WHERE tenant_id=$1 AND device_id=$2 AND id=$3 FOR UPDATE`, tenant, device, claims.ID).Scan(&bound)
 			if errors.Is(err, pgx.ErrNoRows) || err == nil && bound != digestHex {
@@ -482,7 +494,7 @@ func (s Service) useOperation(ctx context.Context, tenant, device, operation, pr
 				return err
 			}
 			return audit.RecordDeviceContext(ctx, tx, tenant, device, current.Member, "context.logout", current.Revision, current.ID, current.Outlet, nil)
-		case "context.read", "catalog.products.write":
+		case "context.read", "catalog.products.write", "inventory.write":
 			err = tx.QueryRow(ctx, `UPDATE hive.operational_contexts SET idle_expires_at=LEAST(expires_at,clock_timestamp()+interval '15 minutes')
 				WHERE tenant_id=$1 AND device_id=$2 AND id=$3 AND idle_expires_at>clock_timestamp() RETURNING idle_expires_at`,
 				tenant, device, current.ID).Scan(&current.IdleExpiresAt)

@@ -23,7 +23,7 @@ import (
 var commandHash = regexp.MustCompile("^[a-f0-9]{64}$")
 
 func validOperationTarget(target OperationTarget, pin bool) bool {
-	if target.Operation == "catalog.products.write" {
+	if isBoundCommand(target.Operation) {
 		return pin && commandHash.MatchString(target.CommandDigest) && outletID.MatchString(target.ContextID) && target.Revision != nil && *target.Revision > 0 && target.Outlet == "" && target.Member == "" && target.After == ""
 	}
 	if target.CommandDigest != "" {

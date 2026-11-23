@@ -58,7 +58,8 @@ type Result struct {
 
 func grantable(capability string) bool {
 	switch capability {
-	case "catalog.products", "catalog.pricing":
+	case "catalog.products", "catalog.pricing", "inventory.receiving", "inventory.repacking",
+		"inventory.transfer", "inventory.adjustment", "inventory.stock_count", "inventory.balance", "inventory.traceability":
 		return platform.IsPilotCapability(capability)
 	default:
 		return false
