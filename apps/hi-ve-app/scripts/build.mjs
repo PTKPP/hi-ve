@@ -27,7 +27,7 @@ await writeFile(new URL("_headers", output), `/*
   X-Content-Type-Options: nosniff
 /sw.js
   Cache-Control: no-cache
-/index.html
+/
   Cache-Control: no-cache
 /manifest.webmanifest
   Cache-Control: no-cache
@@ -43,5 +43,5 @@ for (const path of files) {
 const worker = await readFile(new URL("scripts/worker.js", root), "utf8");
 await writeFile(new URL("sw.js", output), worker
   .replace("__CACHE_VERSION__", hash.digest("hex").slice(0, 16))
-  .replace("__STATIC_PATHS__", JSON.stringify(files.map(path => "/" + path))));
+  .replace("__STATIC_PATHS__", JSON.stringify(files.map(path => path === "index.html" ? "/" : "/" + path))));
 console.log(`Built ${files.length} static shell assets`);

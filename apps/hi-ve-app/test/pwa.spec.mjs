@@ -54,7 +54,7 @@ test("mobile pairing, offline shell and server cash receipt", async ({ page }) =
     await navigator.serviceWorker.ready;
     return (await Promise.all((await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(r => r.url)))).flat();
   });
-  expect(cached.some(url => url.endsWith("/index.html"))).toBe(true);
+  expect(cached.some(url => new URL(url).pathname === "/")).toBe(true);
   expect(cached.every(url => !url.includes("/api/"))).toBe(true);
   expect(JSON.stringify(await stored(page, "meta"))).not.toContain("654321");
   expect(await page.locator("body").evaluate(node => node.scrollWidth <= window.innerWidth)).toBe(true);

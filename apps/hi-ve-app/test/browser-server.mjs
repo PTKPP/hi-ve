@@ -164,6 +164,10 @@ createServer(async (req, res) => {
       return send(res, 200, { puts: state.puts, acks: state.acks, orders: state.orders.size, logouts: state.logouts });
     }
     if (url.pathname.startsWith("/api/")) return await api(req, res, url);
+    if (url.pathname === "/index.html") {
+      res.writeHead(307, { Location: "/" });
+      return res.end();
+    }
     const path = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
     if (!/^[a-z0-9/._-]+$/i.test(path) || path.includes("..") || path === "_headers") return send(res, 404, {});
     const body = await readFile(new URL(`../dist/${path}`, import.meta.url));

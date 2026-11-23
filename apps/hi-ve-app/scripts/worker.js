@@ -22,7 +22,7 @@ self.addEventListener("fetch", event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin || url.search) return;
-  const path = url.pathname === "/" && request.mode === "navigate" ? "/index.html" : url.pathname;
+  const path = url.pathname;
   if (!assetPaths.has(path)) return;
   // Only build artifacts enter Cache Storage. API/session/payment responses go straight to the network.
   event.respondWith((async () => {
