@@ -21,9 +21,9 @@ awk '
     $1 == "hi-ve/backend/cmd/audit-retention" && $2 == "hi-ve/backend/internal/audit" { next }
     # Phase 08 owns activation of Offline in the standard binary.
     $1 == "hi-ve/backend/cmd/api" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|reports|realtime|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|offline|sales|settings|platform\/(entitlements|provisioning))$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|offline|sales|settings|reports|realtime|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&
         $2 ~ /^hi-ve\/backend\/internal\/(identity|audit)$/ { next }
     $1 == "hi-ve/backend/internal/platform/entitlements" &&
@@ -32,6 +32,10 @@ awk '
     # typed denials, while Sales owns the actual posting path.
     $1 == "hi-ve/backend/internal/offline" &&
         $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|platform\/entitlements|sales)$/ { next }
+    $1 == "hi-ve/backend/internal/reports" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|inventory|platform\/entitlements|sales)$/ { next }
+    $1 == "hi-ve/backend/internal/realtime" &&
+        $2 ~ /^hi-ve\/backend\/internal\/(identity|platform\/entitlements)$/ { next }
     $1 == "hi-ve/backend/internal/sales" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|inventory|locations|settings)$/ { next }
     $1 == "hi-ve/backend/internal/inventory" && $2 ~ /^hi-ve\/backend\/internal\/(catalog|locations)$/ { next }
     $1 == "hi-ve/backend/internal/devices" && $2 == "hi-ve/backend/internal/identity" { next }

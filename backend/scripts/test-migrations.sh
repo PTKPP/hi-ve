@@ -340,11 +340,15 @@ expect_sql hive_online_upgrade "$version" 47
 cp migrations/0{48..49}_*.sql "$scratch/pairing_baseline/"
 migrate hive_online_upgrade "$scratch/pairing_baseline"
 expect_sql hive_online_upgrade "$version" 49
+cp migrations/050_*.sql "$scratch/pairing_baseline/"
+migrate hive_online_upgrade "$scratch/pairing_baseline"
+expect_sql hive_online_upgrade "$version" 50
 migrate hive_online_upgrade migrations
 expect_sql hive_online_upgrade "$version" "$latest"
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.offline_leases" 0
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE auth_method='google'" 1
-printf 'PASS: upgrade 049 to offline journals preserves existing Owner sessions\n'
+expect_sql hive_online_upgrade "SELECT count(*) FROM hive.realtime_events" 0
+printf 'PASS: upgrade 049 through reports and realtime preserves existing Owner sessions\n'
 expect_sql hive_online_upgrade "SELECT count(*) FROM hive.locations l JOIN hive.inventory_locations n
     ON (n.tenant_id,n.location_id)=(l.tenant_id,l.id) WHERE l.code='existing' AND l.revision=0" 1
 printf 'PASS: upgrade from Phase 02 preserves outlet IDs and backfills their inventory mapping\n'
@@ -361,4 +365,4 @@ printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
-    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'
+    go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Reports|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'

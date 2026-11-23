@@ -27,6 +27,8 @@ import (
 	"hi-ve/backend/internal/locations"
 	"hi-ve/backend/internal/platform/entitlements"
 	"hi-ve/backend/internal/platform/provisioning"
+	"hi-ve/backend/internal/realtime"
+	"hi-ve/backend/internal/reports"
 	"hi-ve/backend/internal/settings"
 	"hi-ve/backend/internal/transport"
 )
@@ -106,6 +108,12 @@ func run(ctx context.Context) error {
 	if version >= 49 {
 		api.SalesDB = db
 	}
+	if version >= 51 {
+		api.Reports = reports.Service{DB: db, Entitlements: api.Entitlements}
+	}
+	if version >= 52 {
+		api.Realtime = realtime.Service{DB: db, Entitlements: api.Entitlements}
+	}
 	// Offline routes are wired only by disposable test fixtures until the Phase 08 rollout gate passes.
 	address := os.Getenv("HIVE_LISTEN")
 	if address == "" {
@@ -113,7 +121,11 @@ func run(ctx context.Context) error {
 	}
 	handler := api.Handler()
 	server := &http.Server{Addr: address, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		request, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		timeout := 20 * time.Second
+		if r.Header.Get("Upgrade") == "websocket" && strings.HasSuffix(r.URL.Path, "/realtime/socket") {
+			timeout = 10 * time.Minute
+		}
+		request, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 		handler.ServeHTTP(w, r.WithContext(request))
 	}), ReadHeaderTimeout: 5 * time.Second,
