@@ -1,0 +1,41 @@
+name: hi-ve-staging
+services:
+  api:
+    image: ${HIVE_API_IMAGE:?Set the approved registry image digest}
+    env_file:
+      - path: ${HIVE_STAGING_ENV_FILE:?Set the path to the protected staging env file}
+        format: raw
+    environment:
+      HIVE_RUNTIME: staging
+      HIVE_LISTEN: 0.0.0.0:8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - type: bind
+        source: ${HIVE_STAGING_PG_CA_FILE:?Set the PostgreSQL CA path}
+        target: /run/hive/pg-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: 2
+    mem_limit: 1536m
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 25s
+    healthcheck:
+      test: ["CMD", "/hive-api", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

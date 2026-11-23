@@ -52,6 +52,38 @@ jobs:
         run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/test-migrations.sh
       - name: Rehearse M5 Contract on a separate disposable PostgreSQL
         run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/rehearse-m5-contract.sh
+      - name: Rehearse staging TLS, runtime grants and WAL recovery
+        run: PATH="$(go env GOPATH)/bin:$PATH" bash scripts/test-staging-db.sh
+
+  staging-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Validate staging manifests without target credentials
+        run: bash backend/scripts/check-staging-config.sh
+      - name: Build and smoke test the OCI image
+        shell: bash
+        run: |
+          output="$RUNNER_TEMP/hi-ve-oci"
+          docker buildx create --use --driver docker-container --name hive-oci \
+            --driver-opt image=docker.io/moby/buildkit@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          bash backend/scripts/build-staging-image.sh "$output" "$GITHUB_SHA"
+          docker load --platform linux/amd64 --input "$output/hive-api.oci.tar"
+          image="hi-ve-api:$GITHUB_SHA"
+          if ! docker image inspect "$image" >/dev/null 2>&1; then
+            image=$(jq -er .index_digest "$output/release.json")
+          fi
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = '65532:65532'
+          status=0
+          docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$image" healthcheck || status=$?
+          test "$status" -eq 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: hive-api-oci-${{ github.sha }}
+          path: ${{ runner.temp }}/hi-ve-oci/
+          if-no-files-found: error
 
   pwa:
     runs-on: ubuntu-latest

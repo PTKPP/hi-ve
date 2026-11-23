@@ -1,0 +1,7 @@
+tunnel: YOUR_STAGING_TUNNEL_UUID
+credentials-file: /etc/cloudflared/staging-tunnel.json
+ingress:
+  - hostname: api.staging.example.invalid
+    path: ^/api/v1/
+    service: http://127.0.0.1:8080
+  - service: http_status:404

@@ -1,0 +1,9 @@
+# Put these before generic TCP rules. Substitute only approved private addresses.
+local   all           postgres       peer
+hostssl hive_staging  hive_app       192.0.2.10/32   scram-sha-256
+hostssl hive_staging  hive_migrator  192.0.2.30/32   scram-sha-256
+hostssl replication   hive_backup    192.0.2.40/32   scram-sha-256
+host    all           all           0.0.0.0/0       reject
+host    all           all           ::/0            reject
+host    replication   all           0.0.0.0/0       reject
+host    replication   all           ::/0            reject

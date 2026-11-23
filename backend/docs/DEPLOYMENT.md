@@ -88,6 +88,8 @@ Migrasi 036 bersifat aditif: indeks `occurred_at`, tabel kebijakan, legal hold, 
 
 ## Desain production di Proxmox
 
+Untuk artefak staging, konfigurasi target dan rehearsal schema 055, gunakan [runbook staging](STAGING.md). Hasil verifikasi dan gap target tercatat pada [laporan Phase 08.1A](../../PHASE_08_1_REPORT.md).
+
 | Komponen | Desain |
 |---|---|
 | VM aplikasi | Image multi-stage yang dipin dan dibangun CI dari Go di `go.mod`. Builder menjalankan `CGO_ENABLED=0 go build -trimpath ./cmd/api` dari `backend/`. Runtime image minimal menyediakan CA roots untuk Google/SMTP, binary native, dan user non-root. Entrypoint hanya binary API. Pilih image hasil review dan deploy berdasarkan digest. |
