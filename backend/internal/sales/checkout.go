@@ -117,16 +117,8 @@ func (s Service) Checkout(ctx context.Context, tx pgx.Tx, scope Scope, id string
 	}
 	hash := sha256.Sum256(payload)
 	err = pgx.BeginFunc(ctx, tx, func(tx pgx.Tx) error {
-		if err := s.allowed(ctx, tx, scope, CheckoutPermission); err != nil {
+		if err := s.authorizeCheckout(ctx, tx, scope, in); err != nil {
 			return err
-		}
-		for _, item := range in.Items {
-			if strings.Trim(item.Discount, "0.") != "" {
-				if err := s.allowed(ctx, tx, scope, DiscountPermission); err != nil {
-					return err
-				}
-				break
-			}
 		}
 		if err := lockDocument(ctx, tx, scope.Tenant, id); err != nil {
 			return err
@@ -265,4 +257,19 @@ func (s Service) postInventorySale(ctx context.Context, tx pgx.Tx, scope Scope, 
 		return s.allowed(ctx, tx, scope, CheckoutPermission)
 	}}
 	return inv.PostSale(ctx, tx, stockScope, id, scope.Outlet, measures)
+}
+
+func (s Service) authorizeCheckout(ctx context.Context, tx pgx.Tx, scope Scope, in CheckoutInput) error {
+	if err := s.allowed(ctx, tx, scope, CheckoutPermission); err != nil {
+		return err
+	}
+	for _, item := range in.Items {
+		if strings.Trim(item.Discount, "0.") != "" {
+			if err := s.allowed(ctx, tx, scope, DiscountPermission); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	return nil
 }

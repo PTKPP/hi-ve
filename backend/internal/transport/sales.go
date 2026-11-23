@@ -39,6 +39,14 @@ func (a API) salesRoutes(mux *http.ServeMux) {
 		}
 		return s.Checkout(r.Context(), tx, scope, r.PathValue("id"), in)
 	})
+	register("POST", operator, "/{id}/ack", true, func(r *http.Request, tx pgx.Tx, scope sales.Scope, s sales.Service) (any, error) {
+		var in sales.CheckoutInput
+		if !decodeJSON(r, &in) {
+			return nil, sales.ErrInput
+		}
+		return s.AcknowledgeCash(r.Context(), tx, scope, r.PathValue("id"), in)
+	})
+
 	register("POST", operator, "/{id}/confirm-manual", true, func(r *http.Request, tx pgx.Tx, scope sales.Scope, s sales.Service) (any, error) {
 		var in sales.ManualConfirmation
 		if !decodeJSON(r, &in) {

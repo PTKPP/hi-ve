@@ -394,7 +394,17 @@ func TestOperatorPINPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	exec(`INSERT INTO hive.tenant_entitlements
-        SELECT $1,cap,now(),now()+interval '1 day','fixture',NULL,1 FROM unnest(ARRAY['sales.transactions','sales.payments','sales.history','sales.returns']) cap`, tenant)
+        SELECT $1,cap,now(),now()+interval '1 day','fixture',NULL,1 FROM unnest(ARRAY['sales.transactions','sales.payments','sales.history','sales.returns','sales.cashier']) cap`, tenant)
+	searchPath := salesPath + "/items/search?q=curah"
+	expectStatus(t, readPrice(searchPath), 403)
+	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'sales.cashier.search')`, tenant, role)
+	found := readPrice(searchPath)
+	expectStatus(t, found, 200)
+	var matches []catalog.SearchItem
+	if err := json.Unmarshal(found.Body.Bytes(), &matches); err != nil || len(matches) != 1 ||
+		matches[0].SKU != sku || !matches[0].BatchTracked {
+		t.Fatal("unexpected cashier SKU projection", matches, err)
+	}
 	tendered := "200"
 	saleInput := sales.CheckoutInput{Method: "cash", Tendered: &tendered, Items: []sales.CheckoutItem{
 		{Measure: inventory.Measure{SKU: sku, Batch: saleBatch, Quantity: "1", Unit: "g"}, PriceID: salePrice},
@@ -409,6 +419,44 @@ func TestOperatorPINPostgres(t *testing.T) {
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES($1,$2,'sales.checkout.post'),($1,$2,'sales.history.read'),
         ($1,$2,'sales.returns.create')`, tenant, approvalRole)
 	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 200)
+	ackPath := salesPath + "/" + saleID + "/ack"
+	for range 2 {
+		res := salesCall("POST", ackPath, saleInput)
+		expectStatus(t, res, 200)
+		var ack sales.CheckoutACK
+		if err := json.Unmarshal(res.Body.Bytes(), &ack); err != nil || ack.ID != saleID || ack.Outlet != outlet || ack.Actor != member ||
+			ack.State != "cash_received" || ack.PostedAt.IsZero() {
+			t.Fatal("invalid durable checkout ACK", ack, err)
+		}
+	}
+	exec(`UPDATE hive.tenant_entitlements SET expires_at=clock_timestamp() WHERE tenant_id=$1 AND capability_id='sales.payments'`, tenant)
+	expectStatus(t, salesCall("POST", ackPath, saleInput), 403)
+	exec(`UPDATE hive.tenant_entitlements SET expires_at=clock_timestamp()+interval '1 day' WHERE tenant_id=$1 AND capability_id='sales.payments'`, tenant)
+	rawCheckout, _ := json.Marshal(saleInput)
+	for _, change := range []struct {
+		off, on string
+		id      string
+	}{
+		{"UPDATE hive.tenants SET status='suspended' WHERE id=$1", "UPDATE hive.tenants SET status='active' WHERE id=$1", tenant},
+		{"UPDATE hive.devices SET revoked_at=clock_timestamp() WHERE id=$1", "UPDATE hive.devices SET revoked_at=NULL WHERE id=$1", device},
+	} {
+		digest := commandDigest("POST", ackPath, "staff-catalog-command-01", rawCheckout)
+		ackProof := challenge(device, devices.OperationTarget{Operation: "sales.write", ContextID: previous.ID, Revision: &previous.Revision, CommandDigest: digest})
+		exec(change.off, change.id)
+		expectStatus(t, send(handler, "POST", ackPath, ackProof, saleInput, cookies[0]), 401)
+		exec(change.on, change.id)
+	}
+
+	altered := saleInput
+	wrongCash := "201"
+	altered.Tendered = &wrongCash
+	expectStatus(t, salesCall("POST", ackPath, altered), 409)
+	missingSale := id("SELECT gen_random_uuid()")
+	expectStatus(t, salesCall("POST", salesPath+"/"+missingSale+"/ack", saleInput), 404)
+	if count := id(`SELECT count(*)::text FROM hive.sales_orders WHERE tenant_id=$1 AND id IN ($2,$3)`, tenant, saleID, missingSale); count != "1" {
+		t.Fatal("ACK lookup mutated sales", count)
+	}
+
 	anotherSalesPath := base(device) + "/locations/" + otherOutlet + "/sales"
 	expectStatus(t, salesCall("PUT", anotherSalesPath+"/"+saleID, saleInput), 403)
 	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 200)
@@ -425,6 +473,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, foreign), 401)
 	exec(`DELETE FROM hive.tenant_role_location_actions WHERE tenant_id=$1 AND role_id=$2 AND action='sales.checkout.post'`, tenant, approvalRole)
 	expectStatus(t, salesCall("PUT", salesPath+"/"+saleID, saleInput), 403)
+	expectStatus(t, salesCall("POST", ackPath, saleInput), 403)
 
 	switched := login(device, outlet, second, "098765", 1, 201)
 	oldRead(401)
