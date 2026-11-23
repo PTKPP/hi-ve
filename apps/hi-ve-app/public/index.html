@@ -42,7 +42,7 @@
       <form id="pin-login">
         <label>Operator <select name="member" required></select></label>
         <label>PIN <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required></label>
-        <label><input type="checkbox" name="enroll"> Siapkan PIN offline untuk perangkat ini</label>
+        <label id="offline-enroll" hidden><input type="checkbox" name="enroll" disabled> Siapkan PIN offline untuk perangkat ini</label>
         <button class="primary">Masuk</button>
       </form>
     </section>

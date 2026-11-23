@@ -107,7 +107,7 @@ async function api(req, res, url) {
   }
   state.challenges.delete(claims.challenge_id);
   if (claims.operation === "state" && pathname.endsWith("/state")) {
-    return send(res, 200, { context_revision: state.context ? 1 : 0, last_outlet_id: outlet });
+    return send(res, 200, { context_revision: state.context ? 1 : 0, last_outlet_id: outlet, offline_enabled: state.mode !== "offline_disabled" });
   }
   if (claims.operation === "profiles" && claims.outlet_id === outlet && url.searchParams.get("outlet_id") === outlet) {
     return send(res, 200, { profiles: [{ member_id: actor, display_name: "Operator Uji" }] });

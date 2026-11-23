@@ -7,8 +7,8 @@ async function fixture(page, body) {
   const response = body ? await page.request.post("/__fixture/state", { data: body }) : await page.request.get("/__fixture/state");
   return response.json();
 }
-async function ready(page, prepare = false) {
-  await fixture(page, { reset: true });
+async function ready(page, prepare = false, mode = "") {
+  await fixture(page, { reset: true, mode });
   await page.goto("/");
   await page.getByRole("button", { name: "Buat kode pairing" }).click();
   await expect(page.locator("#pair-code")).toHaveText("12345678");
@@ -19,6 +19,7 @@ async function ready(page, prepare = false) {
   await expect(page.getByRole("option", { name: "Operator Uji" })).toBeAttached();
   await page.getByLabel("PIN", { exact: true }).fill("654321");
   if (prepare) await page.getByLabel("Siapkan PIN offline").check();
+  if (mode === "offline_disabled") await expect(page.getByLabel("Siapkan PIN offline")).toBeDisabled();
   await page.getByRole("button", { name: "Masuk", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Penjualan", exact: true })).toBeVisible();
 }
@@ -320,4 +321,13 @@ test("offline login cannot succeed when its audit event cannot be persisted", as
   await expect(page.locator("#notice")).toContainText(/penyimpanan/i);
   await expect(page.getByRole("button", { name: "Simpan penjualan tunai pending" })).toHaveCount(0);
   expect(await stored(page, "login_events")).toHaveLength(0);
+});
+
+
+test("rollout disabled hides offline enrollment and preserves online checkout", async ({ page }) => {
+  await ready(page, false, "offline_disabled");
+  await addCart(page);
+  await page.getByRole("button", { name: "Checkout" }).click();
+  await expect(page.locator("#notice")).toHaveText("Penjualan tunai diterima server.");
+  expect(await fixture(page)).toMatchObject({ puts: 1, offlineSales: 0 });
 });

@@ -341,9 +341,18 @@ bind("pair-redeem", "submit", async event => {
   showContext();
   say("Perangkat terpasang. Muat profil untuk melanjutkan.");
 });
+function showOfflineEnrollment(state) {
+  const enabled = state.offline_enabled === true;
+  const checkbox = byId("pin-login").elements.enroll;
+  byId("offline-enroll").hidden = !enabled;
+  checkbox.disabled = !enabled;
+  if (!enabled) checkbox.checked = false;
+}
+
 bind("profiles", "click", async () => {
   const state = await operation(installation, { operation: "state" }, "/state");
   if (state.last_outlet_id && state.last_outlet_id !== installation.outlet) throw new Error("Outlet terikat pada konteks server. Perpindahan outlet menunggu kebijakan recovery.");
+  showOfflineEnrollment(state);
   profiles = [];
   const select = byId("pin-login").elements.member;
   select.replaceChildren();
@@ -389,7 +398,7 @@ bind("pin-login", "submit", async event => {
   apiStatus("Tersedia", true);
   showContext();
   say();
-  if (prepare) {
+  if (prepare && state.offline_enabled === true) {
     try {
       if (!navigator.locks || !globalThis.crypto?.subtle) throw new Error("Browser tidak mendukung akses offline");
       await enroll(await leaseFor(current), current, pin);

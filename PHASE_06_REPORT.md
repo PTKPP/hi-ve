@@ -1,6 +1,6 @@
 # Laporan Phase 06 · PWA dan Offline
 
-**Final Audit teknis Phase 06.** Implementasi empat keputusan Product Owner masuk Draft PR #16. UAT perangkat fisik, pengukuran PBKDF2 pada perangkat target dan cetak fisik **NOT RUN**. Status acceptance penuh **PARTIAL / NO-GO pilot** sampai bukti target tersedia. [Draft PR #16](https://github.com/PTKPP/hi-ve/pull/16)
+**ENGINEERING COMPLETED.** Product Owner memindahkan UAT perangkat Android/iOS, benchmark PBKDF2 perangkat target dan cetak printer fisik ke exit gate Phase 08. Ketiganya **NOT RUN**. Status kesiapan pilot belum dinyatakan lulus. Phase 07 dapat dimulai dari main terbaru setelah merge PR #16 oleh Product Owner. [PR #16](https://github.com/PTKPP/hi-ve/pull/16)
 
 ## Hasil per increment
 
@@ -39,10 +39,10 @@ Checkpoint implementasi backend `cf32781` dan PWA `05b01fe`.
 |---|---|
 | Go, security dan module boundaries | **PASS lokal** untuk format, vet, race, build, architecture guard, actionlint dan Govulncheck Go 1.27.4. |
 | Database disposable | **PASS lokal** untuk fresh/retry, 049→050, rollback migrasi, preflight Compose 028, rehearsal M5 dan regresi Phase 01–05. Tes disposable mencakup signature, isolasi, retry konkuren, stok atomik, revoke/suspend dan restore, lease expiry, shortage, rollback Audit dan Sales–Inventory, review/refund, segel/penutupan dan revision switch. |
-| Browser dan build | **PASS lokal** untuk static build, dua tes Node, npm audit dan 21 tes Chromium fixture. Tes mencakup Web Crypto, lockout lintas tab, rollback jam, expiry, restart fail-closed, quota/eviction, upload bukti revoked dan ACK login. Chromium memakai fixture HTTP. Go disposable menjalankan handler, posting dan PostgreSQL sungguhan. |
+| Browser dan build | **PASS lokal** untuk static build, dua tes Node, npm audit dan 22 tes Chromium fixture. Tes mencakup Web Crypto, lockout lintas tab, rollback jam, expiry, restart fail-closed, quota/eviction, upload bukti revoked dan ACK login. Chromium memakai fixture HTTP. Go disposable menjalankan handler, posting dan PostgreSQL sungguhan. |
 | UAT-05–07 · pending, replay dan shortage | **PASS automated** untuk jalur yang diuji. UAT perangkat fisik **NOT RUN**. |
 | UAT-HV-04–08 · outlet, PIN, Audit dan revoke | **PASS automated** untuk kontrak yang diuji. Kinerja KDF target, installability fisik, OIDC/ingress target dan pencetakan fisik **NOT RUN**. |
-| GitHub Actions | Bukti Backend dan PWA tersedia pada checks HEAD Draft PR #16. [Checks](https://github.com/PTKPP/hi-ve/pull/16/checks) |
+| GitHub Actions | Bukti Backend dan PWA tersedia pada checks HEAD PR #16. [Checks](https://github.com/PTKPP/hi-ve/pull/16/checks) |
 
 ## Risiko residual
 
@@ -50,3 +50,15 @@ Checkpoint implementasi backend `cf32781` dan PWA `05b01fe`.
 - Eviction seluruh origin atau perangkat hilang sebelum upload dapat menghapus transaksi yang belum pernah diterima server. Recovery mencatat kehilangan dan mencabut perangkat. Jurnal terdaftar, segel dan keputusan Owner melindungi perpindahan konteks. Draf lama dan checkout ambigu yang masih tersimpan perlu ditinjau sebelum segel.
 - Kontrol PIN lokal mengandalkan isolasi browser dan integritas origin serta OS perangkat. Revalidasi server membatasi dampak bukti yang tidak memenuhi hak posting.
 - PBKDF2 600.000 dijalankan pada Chromium fixture. Latensi, storage persistence, dukungan Web Crypto/Web Locks dan pencetakan perangkat kasir target perlu diuji. Realtime mengikuti Phase 07, ingress target mengikuti OPEN-015, dan OPEN-002/014 tetap di luar scope.
+
+
+## Pengaman rollout dan exit Phase 08
+
+Entrypoint Go standar tidak merakit service Offline. Rute lease, intake, review, dan switch tidak terdaftar pada pilot/production, termasuk jika binari berjalan di schema 050. PWA menyembunyikan enrollment saat API state tidak mengiklankan kemampuan offline. Architecture guard juga menolak import Offline langsung dari entrypoint standar. Fixture disposable merakit service secara eksplisit untuk pengujian otomatis. Pengaman ini tidak menggunakan toggle environment, entitlement, atau permission sebagai jalur aktivasi. Integrasi rollout Phase 08 memerlukan perubahan wiring yang direview dan bukti UAT pada target yang diotorisasi. Pemeriksaan ini memverifikasi source dan test composition.
+
+| Exit gate Phase 08 | Bukti yang masih diperlukan |
+|---|---|
+| UAT Android/iOS | Install/update PWA, Web Crypto dan Web Locks, pairing dan sesi live, ketersediaan storage, quota dan eviction, restart dingin dan rollback jam. Uji pending, reconnect/ACK, revoke/suspend, shortage, rekonsiliasi Owner dan outlet switching pada perangkat target. |
+| Benchmark PBKDF2 | Ukur 600.000 iterasi pada perangkat kasir target, termasuk perangkat terlemah, latensi unlock/lockout dan dampak pada UI. |
+| Printer fisik | Verifikasi cetak struk online dan pending, status yang terlihat, ukuran kertas serta alur OS/browser/printer pada perangkat target. |
+| Ingress, risiko residual dan rollout | Verifikasi OPEN-015, cookie/CORS/OIDC target, pembatasan expiry/revoke dan risiko kehilangan bukti sebelum upload. Uji rencana recovery dan pastikan konfigurasi aktif sesuai persetujuan pilot. |

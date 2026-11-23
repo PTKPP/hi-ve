@@ -19,8 +19,9 @@ go list -f '{{ $p := .ImportPath }}{{range .Imports}}{{printf "%s %s\n" $p .}}{{
 awk '
     $2 !~ /^hi-ve\/backend\// { next }
     $1 == "hi-ve/backend/cmd/audit-retention" && $2 == "hi-ve/backend/internal/audit" { next }
+    # Phase 08 owns activation of Offline in the standard binary.
     $1 == "hi-ve/backend/cmd/api" &&
-        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|offline|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
+        $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|locations|settings|platform\/(entitlements|provisioning)|transport)$/ { next }
     $1 == "hi-ve/backend/internal/transport" &&
         $2 ~ /^hi-ve\/backend\/internal\/(audit|catalog|devices|identity|inventory|locations|offline|sales|settings|platform\/(entitlements|provisioning))$/ { next }
     $1 == "hi-ve/backend/internal/platform/provisioning" &&

@@ -86,6 +86,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	app.SalesDB = db
 	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
 	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
+	deployedHandler := app.Handler()
 	app.Offline = offline.New(db, svc, app.Entitlements, app.Catalog, key)
 	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
@@ -483,6 +484,10 @@ func TestOperatorPINPostgres(t *testing.T) {
 			proof := challenge(device, devices.OperationTarget{Operation: "context.read", ContextID: previous.ID, Revision: &rev})
 			return send(handler, "POST", offlinePath+"/lease", proof, nil, cookies[0])
 		}
+		// Schema 050 is present, but the deployed composition has no Offline service.
+		expectStatus(t, send(deployedHandler, "POST", offlinePath+"/lease", "", nil, cookies[0]), http.StatusMethodNotAllowed)
+		expectStatus(t, accessRequest(deployedHandler, "GET", ownerPath+"/review", appOrigin, "", nil, owner), http.StatusMethodNotAllowed)
+
 		response := issue()
 		expectStatus(t, response, 200)
 		var signed offline.SignedLease
