@@ -95,6 +95,11 @@
       <form id="report-connect">
         <label>Tenant laporan <input name="tenant" required autocomplete="off"></label>
         <button>Muat akses laporan</button>
+        <button name="action" value="login">Masuk Google untuk laporan Owner</button>
+      </form>
+      <form id="owner-claim">
+        <label>Kode undangan Primary Owner <input name="invitation" type="password" required autocomplete="off"></label>
+        <button>Tautkan akun Google</button>
       </form>
       <p id="report-message" role="status"></p>
       <form id="report-filter" hidden>
@@ -107,7 +112,7 @@
         <label>ID SKU <input name="sku" autocomplete="off"></label>
         <label>ID operator <input name="actor" autocomplete="off"></label>
         <label>Jenis mutasi <input name="movement" list="report-movement-kinds"></label>
-        <datalist id="report-movement-kinds"><option value="receiving"><option value="repacking"><option value="transfer"><option value="transfer.receipt"><option value="sale"></datalist>
+        <datalist id="report-movement-kinds"><option value="receiving"><option value="repacking"><option value="transfer.dispatch"><option value="transfer.receipt"><option value="sale"></datalist>
         <button>Muat laporan</button>
         <button type="button" id="report-export" hidden>Unduh CSV halaman ini</button>
         <button type="button" id="report-push" hidden>Aktifkan Web Push di browser ini</button>

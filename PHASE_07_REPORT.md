@@ -1,5 +1,38 @@
 # Laporan Phase 07 · Reports, Realtime dan Integrasi Frontend
 
+## Final Audit independen · 23 November 2026
+
+Audit dimulai pada `a1c716a38ebecf33180a0087efb52bf63dc31ce0` di `feat/phase-07-integration`, PR #17 ke `main`. Tabel ini mencatat hasil setelah koreksi. Keputusan engineering membutuhkan dua workflow aktual pada HEAD PR. [Checks PR #17](https://github.com/PTKPP/hi-ve/pull/17/checks)
+
+| Severity | Dampak pada baseline | Koreksi dan bukti |
+|---|---|---|
+| Tinggi | Pergantian tenant dengan cookie App yang sama meninggalkan sesi dan subscription lama yang masih dapat dipakai oleh koneksi lama. | Identity mencabut digest App yang disajikan lintas tenant, dalam transaksi yang sama dengan sesi baru dan audit. `TestProvisioningPostgres` membuktikan sesi dan subscription lama hilang, sementara login App di browser lain serta sesi platform tetap valid. |
+| Tinggi | Pairing yang disetujui sebelum pergantian Owner atau suspend dapat dipakai untuk registrasi perangkat setelah fence. Login PIN yang telah melewati admission juga dapat menyelesaikan KDF dan membuat konteks baru setelah fence. | Migrasi 055 mengikat approval pairing pada epoch tenant serta menjaga writer lama dengan trigger saat redeem. PIN membandingkan epoch antara admission dan finalization. `TestDevicesPostgres` dan `TestOperatorPINPostgres` membuktikan penolakan dan keberhasilan percobaan baru. Rute lifecycle membutuhkan schema 055. |
+| Tinggi | Lifecycle mengambil beberapa lock membership dengan urutan berbeda dari operasi Owner dan dapat membentuk deadlock. | Identity mengambil lock Owner aktif lebih dahulu, lalu membership menurut UUID. Lock `NO KEY UPDATE` tetap memungkinkan pemeriksaan FK. `TestPlatformControlsPostgres` membuktikan staf belum dikunci saat transaksi lifecycle menunggu Owner, serta satu pemenang pada transfer dengan revision yang sama. Rollback audit mempertahankan Owner dan sesi lama. |
+| Tinggi | Laporan transfer tidak menemukan posting `transfer.dispatch`; fixture sebelumnya memasukkan jenis yang berbeda dari writer Inventory. | Join memakai jenis posting yang dipakai writer. `TestReportsPostgres` memeriksa mutasi, transfer dan CSV dengan jenis produksi. |
+| Sedang | Tanggal kalender pada zona IANA dengan perubahan offset di tengah malam bisa bergeser. CSV bisa mengikuti filter yang belum tampil. | Batas awal dan akhir dihitung terpisah, rentang kalender dibatasi 93 hari dan RFC3339 tetap didukung. UI memakai zona laporan serta terikat pada halaman yang sudah dirender untuk CSV. Bukti pada `TestReportCalendarWindow` dan Chromium. |
+| Sedang | Respons Admin yang terlambat dapat mengisi ulang data setelah logout. Claim Owner belum dapat dimulai dari App statis. | Admin membatalkan request saat sesi dibersihkan. App menghubungkan form undangan dan login laporan ke flow Google yang existing. Chromium memeriksa respons terlambat dan request claim, sedangkan callback/aktivasi diverifikasi dengan OIDC fixture PostgreSQL. |
+
+### Gate engineering
+
+| Exit gate | Hasil dan bukti |
+|---|---|
+| Reports · FR-DASH-01/02, FR-RPT-01/02 | **PASS**. `TestReportsPostgres` memeriksa UAT-10 otomatis, agregasi tiga outlet, diskon, retur, void, konfirmasi pembayaran/refund manual, detail dan scope ekspor. `TestReportCalendarWindow` mencakup gap tengah malam, perubahan garis tanggal, DST dan batas 93 hari. Query memakai scope tenant, keyset 50 baris, dan indeks rentang 051. |
+| Realtime dan Web Push · FR-NOTIF-01 | **PASS engineering**. PostgreSQL memeriksa event setelah commit, rollback, replay, origin WebSocket, deduplikasi claim, revoke dan fallback feed saat hasil push ambigu. Chromium memeriksa reconnect/polling dan opt-in/revoke. VAPID berasal dari environment, endpoint HTTPS dibatasi menurut host provider dan redirect ditolak. |
+| Global Settings, Tenant/Owner dan boundary sesi · FR-HV-SET-001, FR-HV-PLT-001/002, FR-HV-ADM-001 | **PASS** untuk lingkup approved. Allowlist bertipe dan default false, permission baca/tulis terpisah, race revision, audit dan rollback diuji. Lifecycle terminal close, transfer Google dengan verifikasi manual tercatat, satu Owner dan revokasi sesi/konteks diuji. Prosedur break-glass yang lebih luas tetap mengikuti OPEN-004. |
+| Database, batas domain dan regresi Phase 01–06 | **PASS lokal**. PostgreSQL disposable fresh 001–055, upgrade 052→054 dan 054→055, lock timeout, rollback DDL, concurrency dan retry. Writer pairing dari source `a1c716a` lulus `TestDevicesPostgres` sebagai binary tes pada schema 055. Rehearsal M5, preflight Compose 028, format, vet, race, build, architecture guard dan Govulncheck Go 1.27.4 lulus. |
+| Frontend dan pengaman Offline | **PASS lokal**. Build statis ketiga aplikasi, audit npm, dua tes Node dan 28 tes Chromium. Binary standar tetap tanpa wiring Offline. Feed tidak mengubah transaksi lokal menjadi synced. |
+| GitHub Actions | Hasil pada revisi koreksi dicatat setelah workflow push dan pull request selesai. [Checks PR #17](https://github.com/PTKPP/hi-ve/pull/17/checks) |
+| Pilot dan target | **DEFERRED ke Phase 08**. Perangkat Android/iOS, benchmark PBKDF2 target, printer fisik, OIDC/SMTP/ingress target dan provider Web Push nyata belum dijalankan. |
+
+### Keputusan dan risiko residual
+
+- **Web Push at-most-once diterima untuk sinyal V1.** Claim permanen mencegah duplikasi pengiriman dari worker lain. Crash setelah claim atau hasil provider ambigu dapat melewatkan sinyal; feed dapat diputar ulang dari cursor terakhir dan laporan membaca status PostgreSQL saat dimuat. Pantau kehilangan sinyal dan contention selama delivery di Phase 08.
+- **Urutan rollout 055.** Uji disposable membuktikan writer pairing lama dapat menyelesaikan approval baru pada 055. Approval yang masih pending saat upgrade memerlukan approval baru. Hentikan seluruh instance lama sebelum mengaktifkan lifecycle untuk memastikan semua finalizer PIN memeriksa epoch. Ukur waktu lock pada target. Bukti ini hanya mencakup operasi disposable.
+- Uji kapasitas tenant, latensi penyegaran, pertumbuhan outbox dan ingress pada volume target di Phase 08. Ekspor multi-halaman dapat melihat perubahan antar-request. OPEN-002/014, OPEN-004 untuk break-glass, dan OPEN-015 tetap mengikuti gate masing-masing.
+
+---
+
 **Checkpoint historis sebelum persetujuan lanjutan · PARTIAL / NO-GO.** PR #16 terverifikasi merged pada `cec0ce0703b2ed6ffb78e12d6d7b3f0e4a7b0c70`, titik awal `feat/phase-07-integration`. Scope yang teruji didokumentasikan di bawah. Backend tetap Go, PostgreSQL tetap otoritatif, dan rute Offline pada binary standar tetap tertutup.
 
 Checkpoint backend `bc72695` dan frontend `3685d02`.

@@ -5,6 +5,7 @@ const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 const code = /^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/;
 const keys = new Map();
 let nextTenant, nextAudit, auditTenant;
+let session = new AbortController();
 
 function element(tag,text) {
   const result = document.createElement(tag);
@@ -12,6 +13,7 @@ function element(tag,text) {
   return result;
 }
 async function request(path, method="GET", data) {
+  const {signal} = session;
   const headers = {};
   const body = data === undefined ? undefined : JSON.stringify(data);
   const scope = method + " " + path + " " + (body ?? "");
@@ -20,25 +22,35 @@ async function request(path, method="GET", data) {
     if(!keys.has(scope)) keys.set(scope,crypto.randomUUID());
     headers["Idempotency-Key"]=keys.get(scope);
   }
-  const response=await fetch(origin+"/api/v1/admin"+path,{method,headers,body,credentials:"include",cache:"no-store",redirect:"error",signal:AbortSignal.timeout(15000)});
+  const response=await fetch(origin+"/api/v1/admin"+path,{method,headers,body,credentials:"include",cache:"no-store",redirect:"error",signal:AbortSignal.any([signal,AbortSignal.timeout(15000)])});
+  signal.throwIfAborted();
   if (!response.ok) throw Object.assign(new Error(response.status===401 ? "Sesi Superadmin diperlukan." :
     response.status===403 ? "Permission platform tidak mencakup operasi ini." : "Operasi ditolak server ("+response.status+")."),{status:response.status});
-  return response.status===204 ? null : response.json();
+  const result=response.status===204 ? null : await response.json();
+  signal.throwIfAborted();
+  return result;
 }
 function action(fn) {
   return async event => {
     event.preventDefault();
+    const current=session;
     const trigger=event.submitter ?? (event.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null);
     if (trigger) trigger.disabled=true;
     try {$("notice").textContent=""; await fn(event);}
     catch (error) {
+      if (current!==session) return;
       if ([401,403].includes(error.status)) clear();
       $("notice").textContent=error.message;
     } finally {if(trigger) trigger.disabled=false;}
   };
 }
 function clear() {
+  session.abort();
+  session = new AbortController();
   $("tenants").replaceChildren();$("audit-events").replaceChildren();$("entitlement").textContent="";
+  $("tenant").value = "";
+  $("capability").value = "";
+  document.querySelectorAll("form[data-operation]").forEach(form=>form.reset());
   $("audit-next").hidden=$("directory-next").hidden=true;
   nextTenant=nextAudit=auditTenant=undefined;
   keys.clear();

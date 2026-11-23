@@ -28,7 +28,10 @@ type Service struct {
 type Filter struct {
 	Tenant, Location, SKU, Actor, Movement, Cursor string
 	From, To                                       time.Time
+	CalendarDays                                   int
 }
+
+const MaxReportDays = 93
 
 type Dashboard struct {
 	Updated time.Time           `json:"updated_at"`
@@ -87,8 +90,13 @@ func allowedInput(f Filter, kind string) bool {
 			return false
 		}
 	}
-	if kind != "inventory" && (!f.From.Before(f.To) || f.To.Sub(f.From) > 93*24*time.Hour) {
-		return false
+	if kind != "inventory" {
+		if !f.From.Before(f.To) || f.CalendarDays < 0 || f.CalendarDays > MaxReportDays {
+			return false
+		}
+		if f.CalendarDays == 0 && f.To.Sub(f.From) > MaxReportDays*24*time.Hour {
+			return false
+		}
 	}
 	return len(f.Movement) <= 40
 }

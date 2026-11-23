@@ -27,6 +27,13 @@ function element(tag, text) {
 function message(text) { $("report-message").textContent = text; }
 function wsState(text) { $("realtime-state").textContent = text; }
 
+async function beginGoogle(path, body) {
+  const {authorization_url} = await request(path, {method:"POST",body});
+  const target = new URL(authorization_url);
+  if (target.origin !== "https://accounts.google.com") throw new Error("Origin Google tidak sah.");
+  window.location.assign(target);
+}
+
 function act(work) {
   return async event => {
     event.preventDefault();
@@ -51,6 +58,7 @@ function closeWorkspace() {
   filters.hidden = true;
   for (const id of ["report-data", "report-detail", "report-notice"]) $(id).replaceChildren();
   $("report-next").hidden = true;
+  $("report-export").hidden = true;
 }
 function setPreset() {
   try {
@@ -112,9 +120,10 @@ const columns = {
 
 function render(current,data) {
   const root = $("report-data");
+  const timestamp = value => new Date(value).toLocaleString("id-ID", {timeZone: current.query.get("timezone") || "UTC"});
   root.replaceChildren();
   if (current.kind === "dashboard") {
-    root.append(element("p", "Diperbarui " + new Date(data.updated_at).toLocaleString("id-ID")),
+    root.append(element("p", "Diperbarui " + timestamp(data.updated_at)),
       table(["Outlet", "Metode", ...Object.values(metrics)], [
         ["Gabungan", "Semua", ...Object.keys(metrics).map(key => data.total[key])],
         ...data.groups.map(g => {
@@ -125,7 +134,6 @@ function render(current,data) {
               filters.elements.kind.value = current.kind = "sales";
               filters.elements.location.value = g.outlet_id;
               current.query = query(current.kind);
-              $("report-export").hidden=false;
               await load(current);
             }));
           }
@@ -137,17 +145,17 @@ function render(current,data) {
       const detail = element("button", "Lihat " + row.id.slice(0,8));
       detail.addEventListener("click", act(async () => {
         const out = await request(current.base + "/reports/sales/" + row.id + "?location=" + row.outlet_id);
-        if(workspace !== current) return;
+        if(workspace !== current || !root.contains(detail)) return;
         $("report-detail").replaceChildren(element("h3", "Transaksi " + out.id),
           table(["Item","Jumlah","Harga jual","Diskon","Neto"],
             out.items.map(item => [item.name,item.quantity+" "+item.unit,item.unit_price,item.discount,item.net])));
       }));
-      return [detail,row.outlet_id,new Date(row.created_at).toLocaleString("id-ID"),row.method,row.payment_state,...Object.keys(metrics).map(key=>row[key])];
+      return [detail,row.outlet_id,timestamp(row.created_at),row.method,row.payment_state,...Object.keys(metrics).map(key=>row[key])];
     });
     root.append(table(["Transaksi","Outlet","Waktu","Metode","Status",...Object.values(metrics)],sales));
   } else {
     const names = columns[current.kind];
-    root.append(table(Object.values(names), data.rows.map(row => Object.keys(names).map(key => row[key]))));
+    root.append(table(Object.values(names), data.rows.map(row => Object.keys(names).map(key => key === "posted_at" ? timestamp(row[key]) : row[key]))));
   }
   $("report-next").hidden = !data.next_cursor;
   current.next = data.next_cursor;
@@ -158,11 +166,25 @@ async function load(current, cursor = "") {
   const kind = current.kind;
   const q = new URLSearchParams(current.query);
   if(cursor) q.set("cursor",cursor);
-  const data = await request(current.base + "/reports/" + kind + "?" + q);
-  if (workspace !== current || requestID !== current.requestID) return;
-  current.cursorForExport = cursor;
-  render(current,data);
-  message("");
+  const active = () => workspace === current && requestID === current.requestID;
+  $("report-export").disabled = true;
+  try {
+    const data = await request(current.base + "/reports/" + kind + "?" + q);
+    if (!active()) return;
+    current.rendered = {kind, query: q};
+    render(current,data);
+    $("report-export").hidden = kind === "dashboard";
+    $("report-export").disabled = false;
+    message("");
+  } catch (error) {
+    if (!active()) return;
+    if ([401,403].includes(error.status)) {
+      closeWorkspace();
+      message("Sesi Google Owner atau hak laporan tidak tersedia.");
+      return;
+    }
+    throw error;
+  }
 }
 
 function acceptFeed(current,feed) {
@@ -207,12 +229,22 @@ function socket(current) {
   });
 }
 
-connect.addEventListener("submit",act(async () => {
+$("owner-claim").addEventListener("submit",act(async event => {
+  const invitation = event.currentTarget.elements.invitation;
+  const body = JSON.stringify({invitation:invitation.value.trim()});
+  invitation.value = "";
+  await beginGoogle("/api/v1/app/owner-claim",body);
+}));
+connect.addEventListener("submit",act(async event => {
   closeWorkspace();
   const expected = generation;
   const tenant = connect.elements.tenant.value.trim();
   if (!uuid.test(tenant)) throw new Error("ID tenant laporan tidak sah.");
   const base = "/api/v1/app/tenants/" + tenant;
+  if (event.submitter?.value === "login") {
+    await beginGoogle(base+"/login");
+    return;
+  }
   const caps = await request(base + "/reports/capabilities");
   if (expected !== generation) return;
   const options = Object.entries(datasets).filter(([, [cap]]) => caps.includes(cap));
@@ -223,7 +255,6 @@ connect.addEventListener("submit",act(async () => {
     const opt = element("option",label); opt.value=kind;return opt;
   }));
   filters.hidden = false;
-  $("report-export").hidden = current.kind === "dashboard";
   $("report-preference").hidden = !caps.includes("realtime.notifications") || !caps.includes("realtime.events");
   const canPush = caps.includes("realtime.notifications") && "PushManager" in window && "Notification" in window && navigator.serviceWorker;
   $("report-push").hidden=true;
@@ -238,7 +269,7 @@ connect.addEventListener("submit",act(async () => {
   setPreset();
   current.query = query(current.kind);
   await load(current);
-  if (!caps.includes("realtime.events")) return;
+  if (workspace !== current || !caps.includes("realtime.events")) return;
   acceptFeed(current,await request(base + "/realtime/events"));
   socket(current);
   current.poll = setInterval(async () => {
@@ -284,21 +315,24 @@ $("report-logout").addEventListener("click",act(async () => {
 }));
 filters.addEventListener("submit",act(async () => {
   const current=workspace;
-  current.kind=filters.elements.kind.value;
-  current.query=query(current.kind);
+  const kind=filters.elements.kind.value;
+  current.query=query(kind);
+  current.kind=kind;
   $("report-detail").replaceChildren();
-  $("report-export").hidden=current.kind==="dashboard";
   await load(current);
 }));
 $("report-next").addEventListener("click",act(() => load(workspace,workspace.next)));
 $("report-export").addEventListener("click",act(async () => {
   const current=workspace;
-  const q = new URLSearchParams(current.query);
-  if(current.cursorForExport) q.set("cursor",current.cursorForExport);
+  const rendered = current?.rendered;
+  if (!rendered) return;
+  const q = new URLSearchParams(rendered.query);
   q.set("format","csv");
-  const response=await fetch(apiOrigin+current.base+"/reports/"+current.kind+"?"+q,{credentials:"include",cache:"no-store",redirect:"error"});
+  const response=await fetch(apiOrigin+current.base+"/reports/"+rendered.kind+"?"+q,{credentials:"include",cache:"no-store",redirect:"error"});
   if(!response.ok) throw Object.assign(new Error("Ekspor gagal"),{status:response.status});
-  const url=URL.createObjectURL(await response.blob());
+  const blob=await response.blob();
+  if (workspace !== current || current.rendered !== rendered) return;
+  const url=URL.createObjectURL(blob);
   const download=element("a");
   download.href=url;
   download.download="hi-ve-report.csv";

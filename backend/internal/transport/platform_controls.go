@@ -43,6 +43,9 @@ func (a API) controlsRoutes(mux *http.ServeMux) {
 		}
 		respond(w, 200, result)
 	}))
+	if !a.Devices.TenantEpochSchema {
+		return
+	}
 	mux.HandleFunc("POST /api/v1/admin/tenants/{tenant_id}/lifecycle/{action}", a.admin(func(w http.ResponseWriter, r *http.Request) {
 		tenant, action := r.PathValue("tenant_id"), r.PathValue("action")
 		var in provisioning.Administration

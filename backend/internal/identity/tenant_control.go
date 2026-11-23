@@ -3,13 +3,17 @@ package identity
 import (
 	"context"
 	"errors"
+
 	"github.com/jackc/pgx/v5"
 )
 
 var ErrOwnerCandidate = errors.New("candidate lacks a verified Google identity")
 
 func LockTenantMemberships(ctx context.Context, tx pgx.Tx, tenant string) error {
-	_, err := tx.Exec(ctx, `SELECT principal_id FROM hive.tenant_memberships WHERE tenant_id=$1 ORDER BY principal_id FOR UPDATE`, tenant)
+	// Owner operations lock the active Owner before any target member. Allow
+	// FK checks (including pairing audit writes) while waiting on the tenant.
+	_, err := tx.Exec(ctx, `SELECT principal_id FROM hive.tenant_memberships WHERE tenant_id=$1
+		ORDER BY (active AND role='primary_owner') DESC,principal_id FOR NO KEY UPDATE`, tenant)
 	return err
 }
 func RevokeTenantSessions(ctx context.Context, tx pgx.Tx, tenant string) error {

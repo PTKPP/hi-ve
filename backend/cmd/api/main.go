@@ -87,6 +87,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	deviceService.PINContextSchema = version >= 35
+	deviceService.TenantEpochSchema = version >= 55
 	if deviceService.PINContextSchema {
 		deviceService.PIN = staffPIN
 	}

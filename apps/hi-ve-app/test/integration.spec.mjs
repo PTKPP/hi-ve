@@ -45,14 +45,16 @@ test("Owner dashboard drills into a receipt and applies live events once", async
 
 test("static Superadmin uses platform routes and clears records when access is rejected", async ({page}) => {
   const root = "http://127.0.0.1:4182";
-  let denied=false, directoryCalls=0;
+  let denied=false, directoryCalls=0, delayed;
   await page.route(root+"/**", async route => {
     const path=new URL(route.request().url()).pathname;
     if (path==="/api/v1/admin/tenants") {
       directoryCalls++;
       expect(route.request().method()).toBe("GET");
+      if (directoryCalls===3) await new Promise(resolve=>{delayed=resolve;});
       return denied ? route.fulfill({status:401}) : route.fulfill({json:{tenants:[{tenant_id:tenant,name:"Tenant Satu",status:"active"}]}});
     }
+    if (path==="/api/v1/admin/logout") return route.fulfill({status:204});
     const file={"/":"index.html","/style.css":"style.css","/assets/admin.mjs":"assets/admin.mjs","/assets/config.mjs":"assets/config.mjs"}[path];
     if(!file) return route.fulfill({status:404});
     const contentType = file.endsWith(".mjs") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "text/html";
@@ -68,6 +70,67 @@ test("static Superadmin uses platform routes and clears records when access is r
   await expect(page.getByText("Sesi Superadmin diperlukan.")).toBeVisible();
   await expect(page.getByRole("button",{name:"Pilih Tenant Satu"})).toHaveCount(0);
   expect(directoryCalls).toBe(2);
+  denied=false;
+  await page.getByRole("button",{name:"Muat tenant",exact:true}).click();
+  await expect.poll(()=>Boolean(delayed)).toBe(true);
+  await page.getByRole("button",{name:"Keluar",exact:true}).click();
+  await expect(page.getByText("Sesi platform ditutup.")).toBeVisible();
+  delayed();
+  await expect(page.getByRole("button",{name:"Muat tenant",exact:true})).toBeEnabled();
+  await expect(page.getByRole("button",{name:"Pilih Tenant Satu"})).toHaveCount(0);
+  await expect(page.getByLabel("ID tenant")).toHaveValue("");
+});
+
+test.describe("Owner report timezone and export", () => {
+  test.use({timezoneId:"Asia/Jakarta"});
+  test("timestamps and CSV use the rendered report scope", async ({page}) => {
+    let delayNext, exported;
+    const other = "90000000-0000-4000-8000-000000000004";
+    await page.route("**/api/v1/app/**", async route => {
+      const url=new URL(route.request().url());
+      if (url.pathname===base+"/reports/capabilities") return route.fulfill({json:["reports.sales"]});
+      if (url.searchParams.get("format")==="csv") {
+        exported=url.searchParams.get("location");
+        return route.fulfill({body:"id\nfixture",contentType:"text/csv"});
+      }
+      if (url.searchParams.get("location")===other) await new Promise(resolve=>{delayNext=resolve;});
+      return route.fulfill({json:{rows:[{...totals,id:sale,outlet_id:url.searchParams.get("location")||outlet,
+        created_at:"2026-11-01T01:00:00Z",method:"cash",payment_state:"cash_received"}]}});
+    });
+    await page.goto("/");
+    await page.getByText("Dashboard dan laporan Owner",{exact:true}).click();
+    await page.getByLabel("Tenant laporan").fill(tenant);
+    await page.getByRole("button",{name:"Muat akses laporan"}).click();
+    const report = page.locator("#report-data");
+    await expect(report).toContainText("01.00.00");
+    await page.locator("#report-filter [name=location]").fill(other);
+    await page.getByRole("button",{name:"Muat laporan",exact:true}).click();
+    const exportButton=page.locator("#report-export");
+    await expect.poll(()=>Boolean(delayNext)).toBe(true);
+    await expect(exportButton).toBeDisabled();
+    await expect(report).toContainText(outlet);
+    delayNext();
+    await expect(report).toContainText(other);
+    await exportButton.click();
+    await expect.poll(()=>exported).toBe(other);
+  });
+});
+
+test("Owner can start the existing invitation claim from the static app", async ({page}) => {
+  let body;
+  await page.route("**/api/v1/app/owner-claim",route=>{
+    expect(route.request().method()).toBe("POST");
+    body=route.request().postDataJSON();
+    return route.fulfill({json:{authorization_url:"https://accounts.google.com/o/oauth2/v2/auth"}});
+  });
+  await page.route("https://accounts.google.com/**",route=>route.fulfill({status:204}));
+  await page.goto("/");
+  await page.getByText("Dashboard dan laporan Owner",{exact:true}).click();
+  const invitation=page.getByLabel("Kode undangan Primary Owner");
+  await invitation.fill("synthetic-invitation-code");
+  await page.getByRole("button",{name:"Tautkan akun Google"}).click();
+  await expect.poll(()=>body).toEqual({invitation:"synthetic-invitation-code"});
+  await expect(invitation).toHaveValue("");
 });
 
 test("Owner dashboard falls back to polling after a WebSocket disconnect", async ({page}) => {

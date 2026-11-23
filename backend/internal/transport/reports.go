@@ -110,15 +110,26 @@ func reportFilter(kind string, r *http.Request) (reports.Filter, string, error) 
 		if err != nil {
 			return f, "", reports.ErrInput
 		}
-		from, err := time.ParseInLocation(time.DateOnly, query.Get("date_from"), loc)
+		from, err := time.Parse(time.DateOnly, query.Get("date_from"))
 		if err != nil {
 			return f, "", reports.ErrInput
 		}
-		through, err := time.ParseInLocation(time.DateOnly, query.Get("date_through"), loc)
-		if err != nil || through.Before(from) {
+		through, err := time.Parse(time.DateOnly, query.Get("date_through"))
+		if err != nil || through.Before(from) || through.Sub(from) >= reports.MaxReportDays*24*time.Hour {
 			return f, "", reports.ErrInput
 		}
-		f.From, f.To = from.UTC(), through.AddDate(0, 0, 1).UTC()
+		f.CalendarDays = int(through.Sub(from)/(24*time.Hour)) + 1
+		start, startOK := civilDayStart(from, loc)
+		_, throughOK := civilDayStart(through, loc)
+		end, endOK := civilDayStart(through.AddDate(0, 0, 1), loc)
+		// A full civil date can be skipped when a zone changes sides of the date line.
+		if !endOK {
+			end, endOK = civilDayStart(through.AddDate(0, 0, 2), loc)
+		}
+		if !startOK || !throughOK || !endOK {
+			return f, "", reports.ErrInput
+		}
+		f.From, f.To = start, end
 	}
 	if kind == "inventory" {
 		f.From, f.To = time.Time{}, time.Time{}
@@ -128,6 +139,28 @@ func reportFilter(kind string, r *http.Request) (reports.Filter, string, error) 
 		return f, "", reports.ErrInput
 	}
 	return f, format, nil
+}
+
+// Find the first valid instant in the requested calendar day. Each zone
+// interval supplies its own offset, including shifts that skip local midnight.
+func civilDayStart(date time.Time, loc *time.Location) (time.Time, bool) {
+	for instant, limit := date.Add(-48*time.Hour), date.Add(48*time.Hour); instant.Before(limit); {
+		local := instant.In(loc)
+		_, offset := local.Zone()
+		_, next := local.ZoneBounds()
+		start := date.Add(-time.Duration(offset) * time.Second)
+		if instant.After(start) {
+			start = instant
+		}
+		if (next.IsZero() || start.Before(next)) && start.In(loc).Format(time.DateOnly) == date.Format(time.DateOnly) {
+			return start.UTC(), true
+		}
+		if next.IsZero() {
+			break
+		}
+		instant = next
+	}
+	return time.Time{}, false
 }
 
 func reportError(w http.ResponseWriter, err error) {

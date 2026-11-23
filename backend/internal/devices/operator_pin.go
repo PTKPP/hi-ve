@@ -199,8 +199,13 @@ func (s Service) Profiles(ctx context.Context, tenant, device, outlet, after, pr
 	return page, err
 }
 
-func (s Service) lockLoginScope(ctx context.Context, tx pgx.Tx, claims operationClaims, update bool) (identity.PINAttempt, error) {
-	attempt := identity.PINAttempt{}
+type pinLoginScope struct {
+	identity.PINAttempt
+	epoch int64
+}
+
+func (s Service) lockLoginScope(ctx context.Context, tx pgx.Tx, claims operationClaims, update bool) (pinLoginScope, error) {
+	var attempt pinLoginScope
 	err := s.AuthorizeOperator(ctx, tx, claims.Tenant, claims.Member, claims.Outlet)
 	if errors.Is(err, identity.ErrForbidden) || errors.Is(err, identity.ErrRBACTarget) {
 		return attempt, ErrProof
@@ -208,7 +213,7 @@ func (s Service) lockLoginScope(ctx context.Context, tx pgx.Tx, claims operation
 	if err != nil {
 		return attempt, err
 	}
-	attempt, err = s.PIN.LockCredential(ctx, tx, claims.Tenant, claims.Member)
+	attempt.PINAttempt, err = s.PIN.LockCredential(ctx, tx, claims.Tenant, claims.Member)
 	if errors.Is(err, identity.ErrPINIneligible) {
 		return attempt, ErrProof
 	}
@@ -232,11 +237,18 @@ func (s Service) lockLoginScope(ctx context.Context, tx pgx.Tx, claims operation
 	if revision != *claims.Revision {
 		return attempt, ErrConflict
 	}
+	if s.TenantEpochSchema {
+		// lockPINDevice already holds the tenant lock until this transaction commits.
+		err = tx.QueryRow(ctx, `SELECT authorization_epoch FROM hive.tenants WHERE id=$1`, claims.Tenant).Scan(&attempt.epoch)
+		if err != nil {
+			return attempt, err
+		}
+	}
 	return attempt, nil
 }
 
-func (s Service) admitPIN(ctx context.Context, claims operationClaims, peer netip.Addr) (identity.PINAttempt, func(), error) {
-	var snapshot identity.PINAttempt
+func (s Service) admitPIN(ctx context.Context, claims operationClaims, peer netip.Addr) (pinLoginScope, func(), error) {
+	var snapshot pinLoginScope
 	var release func()
 	var declined error
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
@@ -343,7 +355,7 @@ func (s Service) LoginPIN(ctx context.Context, tenant, device, proof, pin string
 			slog.Warn("operator PIN lease cleanup failed")
 		}
 	}()
-	matched, err := s.PIN.Match(tenant, target.Member, pin, attempt)
+	matched, err := s.PIN.Match(tenant, target.Member, pin, attempt.PINAttempt)
 	release()
 	if err != nil {
 		return result, "", err
@@ -354,7 +366,7 @@ func (s Service) LoginPIN(ctx context.Context, tenant, device, proof, pin string
 		if err != nil {
 			return err
 		}
-		if current.Revision() != attempt.Revision() {
+		if current.Revision() != attempt.Revision() || current.epoch != attempt.epoch {
 			return ErrProof
 		}
 		locked, err := s.PIN.Complete(work, tx, tenant, target.Member, claims.ID, matched)

@@ -46,7 +46,7 @@ func TestDevicesPostgres(t *testing.T) {
 	wrongTenant := location(foreign, "outlet", "outlet")
 	warehouse := location(tenant, "warehouse", "warehouse")
 	service := devices.Service{DB: db, CodeKey: bytes.Repeat([]byte{7}, 32), RateKey: bytes.Repeat([]byte{8}, 32),
-		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets}
+		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets, TenantEpochSchema: true}
 	handler := API{Devices: service, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
 	const startPath = "/api/v1/devices/pairings"
 	encode := base64.RawURLEncoding.EncodeToString
@@ -178,6 +178,15 @@ func TestDevicesPostgres(t *testing.T) {
 	if err != nil || audits != 3 || assignments != 2 || count != 1 {
 		t.Fatalf("unexpected devices/assignments/audit: %d/%d/%d %v", count, assignments, audits, err)
 	}
+	epochKey, epochPublic := newKey()
+	stale := challenge(start(epochPublic, "start-stale-epoch"))
+	expectStatus(t, approve(stale, tenant, "approve-stale-epoch", []string{active}, own), 204)
+	exec(`UPDATE hive.tenants SET status='suspended' WHERE id=$1`, tenant)
+	exec(`UPDATE hive.tenants SET status='active' WHERE id=$1`, tenant)
+	expectStatus(t, redeem(stale, redeemKey, sign(stale, redeemKey, epochKey)), 404)
+	fresh := challenge(start(epochPublic, "start-current-epoch"))
+	expectStatus(t, approve(fresh, tenant, "approve-current-epoch", []string{active}, own), 204)
+	expectStatus(t, redeem(fresh, redeemKey, sign(fresh, redeemKey, epochKey)), 200)
 	expired := challenge(start(public, "start-expiry-receipt"))
 	exec(`UPDATE hive.device_pairings SET expires_at=clock_timestamp() WHERE id=$1`, expired.ID)
 	expectStatus(t, approve(expired, tenant, approvalKey, []string{active}, own), 404)
@@ -225,7 +234,7 @@ func TestDevicesPostgres(t *testing.T) {
 		t.Fatalf("concurrent bad codes: %d denied, %d limited", failed, throttled)
 	}
 
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 6; i++ {
 		_, pub := newKey()
 		raw, _ := json.Marshal(map[string]any{"public_key_jwk": pub})
 		req := httptest.NewRequest("POST", startPath, bytes.NewReader(raw))
@@ -235,7 +244,7 @@ func TestDevicesPostgres(t *testing.T) {
 		req.Header.Set("CF-Connecting-IP", fmt.Sprintf("198.51.100.%d", i+1))
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
-		if i == 7 {
+		if i == 5 {
 			expectStatus(t, w, 429)
 			if strings.Contains(w.Body.String(), "peer") {
 				t.Fatal("rate response exposed scope")

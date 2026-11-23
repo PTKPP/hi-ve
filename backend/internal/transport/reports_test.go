@@ -79,8 +79,8 @@ func TestReportsPostgres(t *testing.T) {
 	}
 	first := order(tenant, owner, l1, "500000", "cash")
 	order(tenant, owner, l2, "300000", "cash")
-	order(tenant, owner, l3, "200000", "cash")
-	order(tenant, owner, l2, "120000", "manual_non_cash")
+	third := order(tenant, owner, l3, "200000", "cash")
+	pending := order(tenant, owner, l2, "120000", "manual_non_cash")
 	order(foreign, foreignActor, fx, "3000000", "cash")
 	product := id(`INSERT INTO hive.catalog_products VALUES($1,gen_random_uuid(),'Produk','Kategori',1) RETURNING id`, tenant)
 	sku := id(`INSERT INTO hive.catalog_skus(tenant_id,id,product_id,code,variant,unit,active,batch_tracked,revision)
@@ -91,10 +91,10 @@ func TestReportsPostgres(t *testing.T) {
 	stockNode := id(`SELECT id FROM hive.inventory_locations WHERE tenant_id=$1 AND location_id=$2`, tenant, l1)
 	transfer := id(`INSERT INTO hive.inventory_documents(tenant_id,kind,id,location_id,created_by,payload)
 	 VALUES($1,'transfer',gen_random_uuid(),$2,$3,jsonb_build_object('destination_id',$4::text)) RETURNING id`, tenant, l1, owner, l2)
-	exec(`INSERT INTO hive.inventory_postings(tenant_id,kind,document_id,actor_id,fingerprint) VALUES($1,'transfer',$2,$3,sha256('fixture'::bytea))`, tenant, transfer, owner)
+	exec(`INSERT INTO hive.inventory_postings(tenant_id,kind,document_id,actor_id,fingerprint) VALUES($1,'transfer.dispatch',$2,$3,sha256('fixture'::bytea))`, tenant, transfer, owner)
 	exec(`INSERT INTO hive.inventory_transfers(tenant_id,id,source_node,dispatched,remaining,received,discrepancy) VALUES($1,$2,$3,8,2,4,2)`, tenant, transfer, stockNode)
 	exec(`INSERT INTO hive.inventory_balances(tenant_id,location_id,sku_id,bucket,quantity,revision) VALUES($1,$2,$3,'in_transit',2,1)`, tenant, stockNode, sku)
-	exec(`INSERT INTO hive.inventory_movements VALUES($1,'transfer',$2,1,$3,$4,NULL,'in_transit',2)`, tenant, transfer, stockNode, sku)
+	exec(`INSERT INTO hive.inventory_movements VALUES($1,'transfer.dispatch',$2,1,$3,$4,NULL,'in_transit',2)`, tenant, transfer, stockNode, sku)
 	from, to := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
 	window := "?from=" + from.UTC().Format(time.RFC3339) + "&to=" + to.UTC().Format(time.RFC3339)
 	call := func(path string) *httptest.ResponseRecorder { return api("GET", path, nil, session) }
@@ -115,8 +115,9 @@ func TestReportsPostgres(t *testing.T) {
 	expectStatus(t, bad, 404)
 	for _, test := range []struct{ path, want string }{
 		{"/reports/inventory?location=" + l1, `"bucket":"in_transit"`},
-		{"/reports/movements" + window + "&location=" + l1, `"kind":"transfer"`},
+		{"/reports/movements" + window + "&location=" + l1 + "&movement=transfer.dispatch", `"kind":"transfer.dispatch"`},
 		{"/reports/transfers" + window + "&location=" + l2, `"discrepancy":"2"`},
+		{"/reports/transfers" + window + "&location=" + l2 + "&format=csv", transfer},
 		{"/reports/sales" + window + "&location=" + l2 + "&format=csv", "pending_manual_confirmation"},
 		{"/reports/sales/" + first + "?location=" + l1, `"name":"Produk"`},
 	} {
@@ -178,6 +179,20 @@ func TestReportsPostgres(t *testing.T) {
 		if f.Cursor != "5" || len(f.Events) != 1 || f.Events[0].Kind != "sale.reversed" || f.Events[0].Outlet != l1 {
 			t.Fatalf("replayed feed %+v", f)
 		}
+	}
+	void := id(`INSERT INTO hive.sales_reversal_requests(tenant_id,id,sale_id,kind,requester_id,reason,payload)
+		VALUES($1,gen_random_uuid(),$2,'void',$3,'fixture','{}') RETURNING id`, tenant, third, owner)
+	exec(`INSERT INTO hive.sales_reversal_postings(tenant_id,id,approver_id,reason,refund) VALUES($1,$2,$3,'fixture',200000)`, tenant, void, owner)
+	exec(`INSERT INTO hive.sales_manual_confirmations(tenant_id,sale_id,actor_id,reference) VALUES($1,$2,$3,'fixture')`, tenant, pending, owner)
+	exec(`INSERT INTO hive.sales_refund_confirmations(tenant_id,reversal_id,actor_id,reference) VALUES($1,$2,$3,'fixture')`, tenant, reversal, owner)
+	finalReport := call("/reports/dashboard" + window)
+	expectStatus(t, finalReport, 200)
+	var verified reports.Dashboard
+	must(json.Unmarshal(finalReport.Body.Bytes(), &verified))
+	total := verified.Total
+	if total.Gross != "1130000" || total.Net != "895000" || total.Voids != "200000" || total.Returns != "25000" ||
+		total.Pending != "0" || total.Received != "1120000" || total.RefundPaid != "25000" {
+		t.Fatalf("incorrect confirmed payment / reversals: %+v", total)
 	}
 	exec(`UPDATE hive.tenant_entitlements SET revoked_at=clock_timestamp() WHERE tenant_id=$1 AND capability_id='reports.dashboard'`, tenant)
 	expectStatus(t, call("/reports/dashboard"+window), 403)

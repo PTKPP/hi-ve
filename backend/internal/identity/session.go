@@ -91,14 +91,12 @@ func (s Store) startOwnerSession(ctx context.Context, proof GoogleIdentity, flow
 		if err != nil {
 			return err
 		}
-		// Lock both memberships before touching sessions, including a cookie from
-		// a different principal in the same tenant. Match lifecycle and logout ordering.
+		// The App cookie is host-wide. Rotate the presented session even when the
+		// browser changes tenant, using the same membership order as lifecycle.
 		if _, err = tx.Exec(ctx, `SELECT m.principal_id FROM hive.tenant_memberships m
-			WHERE m.tenant_id=$1 AND (
-				m.principal_id=$2 OR m.principal_id=(
-					SELECT principal_id FROM hive.tenant_sessions WHERE tenant_id=$1 AND digest=$3
-				)
-			) ORDER BY m.principal_id FOR SHARE`, flow.Tenant, actor, Digest(previous)); err != nil {
+			WHERE (m.tenant_id=$1 AND m.principal_id=$2) OR (m.tenant_id,m.principal_id)=(
+				SELECT tenant_id,principal_id FROM hive.tenant_sessions WHERE digest=$3
+			) ORDER BY m.tenant_id,(m.active AND m.role='primary_owner') DESC,m.principal_id FOR SHARE`, flow.Tenant, actor, Digest(previous)); err != nil {
 			return err
 		}
 		var active bool
@@ -128,7 +126,7 @@ func (s Store) startOwnerSession(ctx context.Context, proof GoogleIdentity, flow
 			return err
 		}
 		if previous != "" && previous != secret {
-			if _, err = tx.Exec(ctx, `DELETE FROM hive.tenant_sessions WHERE digest=$1 AND tenant_id=$2`, Digest(previous), flow.Tenant); err != nil {
+			if _, err = tx.Exec(ctx, `DELETE FROM hive.tenant_sessions WHERE digest=$1`, Digest(previous)); err != nil {
 				return err
 			}
 		}

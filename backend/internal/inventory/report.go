@@ -86,14 +86,16 @@ type ReportTransfer struct {
 	Discrepancy string `json:"discrepancy"`
 }
 
+const transferDispatchKind = "transfer.dispatch"
+
 func ProjectTransfers(ctx context.Context, tx pgx.Tx, f ReportFilter, after string) ([]ReportTransfer, error) {
 	rows, err := tx.Query(ctx, `SELECT t.id,d.location_id,COALESCE(d.payload->>'destination_id',''),
 	 t.dispatched::text,t.received::text,t.remaining::text,t.discrepancy::text
 	 FROM hive.inventory_transfers t JOIN hive.inventory_documents d USING(tenant_id,kind,id)
-	 JOIN hive.inventory_postings p ON (p.tenant_id,p.kind,p.document_id)=(t.tenant_id,t.kind,t.id)
+	 JOIN hive.inventory_postings p ON (p.tenant_id,p.kind,p.document_id)=(t.tenant_id,$6,t.id)
 	 WHERE t.tenant_id=$1 AND ($2='' OR d.location_id=NULLIF($2,'')::uuid OR d.payload->>'destination_id'=$2)
 	 AND ($3='' OR t.id>NULLIF($3,'')::uuid) AND p.posted_at >= $4 AND p.posted_at < $5
-	 ORDER BY t.id LIMIT 51`, f.Tenant, f.Location, after, f.From, f.To)
+	 ORDER BY t.id LIMIT 51`, f.Tenant, f.Location, after, f.From, f.To, transferDispatchKind)
 	if err != nil {
 		return nil, err
 	}
