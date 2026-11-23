@@ -59,9 +59,12 @@ func TestReportsPostgres(t *testing.T) {
 	exec(`INSERT INTO hive.provisioning_audit(tenant_id,actor_id,action,outcome,verification_reference)
         VALUES($1,$2,'tenant.activate','succeeded','restricted-reference')`, tenant, adminID)
 	expectStatus(t, adminRead("", admin), 200)
+	exec(`INSERT INTO hive.entitlement_audit(tenant_id,capability_id,actor_id,action,previous_revision,revision,reason_code)
+        VALUES($1,'reports.dashboard',$2,'grant',0,1,'internal-test-reason')`, tenant, adminID)
 	auditPage := adminRead("/"+tenant+"/audit", admin)
 	expectStatus(t, auditPage, 200)
-	if !strings.Contains(auditPage.Body.String(), "tenant.activate") || strings.Contains(auditPage.Body.String(), "restricted-reference") {
+	if !strings.Contains(auditPage.Body.String(), "tenant.activate") || !strings.Contains(auditPage.Body.String(), "entitlement.grant") ||
+		strings.Contains(auditPage.Body.String(), "internal-test-reason") || strings.Contains(auditPage.Body.String(), "restricted-reference") {
 		t.Fatal("incorrect platform audit projection")
 	}
 

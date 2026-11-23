@@ -534,7 +534,7 @@ Checkpoint backend `cf32781` dan PWA `05b01fe`. Schema 050 hanya dijalankan pada
 | 07.5 · FR-HV-PLT-001/002, FR-HV-SET-001 | Integrasi Superadmin dengan API provisioning, aktivasi, entitlement dan audit serta Landing statis. S3-G dan lifecycle/recovery pascaaktivasi belum lengkap. |
 | 07.6 | Final Audit **PARTIAL / NO-GO untuk penutupan**. UAT target tetap Phase 08. |
 
-Checkpoint backend `bc72695` dan frontend `3685d02`. Schema 051–052 diuji hanya pada PostgreSQL disposable. Compose development maksimal 028 dan Offline tetap tertutup pada binary standar. [Laporan Phase 07](PHASE_07_REPORT.md) · [GitHub Actions](https://github.com/PTKPP/hi-ve/actions?query=branch%3Afeat%2Fphase-07-integration)
+Checkpoint backend `bc72695` dan frontend `3685d02`. Schema 051–052 diuji hanya pada PostgreSQL disposable. Compose development maksimal 028 dan Offline tetap tertutup pada binary standar. [Laporan Phase 07](PHASE_07_REPORT.md) · [Checks Draft PR #17](https://github.com/PTKPP/hi-ve/pull/17/checks)
 
 ## Riwayat checkpoint
 

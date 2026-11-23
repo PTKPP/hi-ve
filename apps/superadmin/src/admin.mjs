@@ -65,9 +65,9 @@ async function directory(next=false) {
 }
 async function audit(next=false) {
   const tenant=selected();
-  const query=next && nextAudit && tenant===auditTenant ? "?"+new URLSearchParams({before:nextAudit.occurred_at,before_id:nextAudit.id}) : "";
+  const query=next && nextAudit && tenant===auditTenant ? "?"+new URLSearchParams({before:nextAudit.occurred_at,before_id:nextAudit.id,before_source:nextAudit.source}) : "";
   const body=await request("/tenants/"+tenant+"/audit"+query);
-  $("audit-events").replaceChildren(...body.events.map(row=>element("li",new Date(row.occurred_at).toLocaleString("id-ID")+" · "+row.action+" · "+row.outcome)));
+  $("audit-events").replaceChildren(...body.events.map(row=>element("li",new Date(row.occurred_at).toLocaleString("id-ID")+" · "+row.action+" · "+row.outcome+(row.capability_id ? " · "+row.capability_id : ""))));
   nextAudit=body.next;auditTenant=tenant;$("audit-next").hidden=!nextAudit;
 }
 $("login").addEventListener("click",action(async()=>{

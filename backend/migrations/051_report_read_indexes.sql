@@ -5,3 +5,4 @@ CREATE INDEX inventory_postings_tenant_report_range ON hive.inventory_postings(t
 CREATE INDEX inventory_balances_report_page ON hive.inventory_balances
  (tenant_id,location_id,sku_id,COALESCE(batch_id,'00000000-0000-0000-0000-000000000000'::uuid),bucket);
 CREATE INDEX provisioning_audit_tenant_report ON hive.provisioning_audit(tenant_id,occurred_at DESC,id DESC);
+CREATE INDEX entitlement_audit_tenant_report ON hive.entitlement_audit(tenant_id,occurred_at DESC,id DESC);
