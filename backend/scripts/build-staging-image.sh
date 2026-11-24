@@ -23,6 +23,12 @@ manifest=$(blob "$index" | jq -er '.manifests[] | select(.platform.os=="linux" a
 config=$(blob "$manifest" | jq -er .config.digest)
 blob "$config" |
     jq -e --arg rev "$revision" '.config.User == "65532:65532" and .config.Labels["org.opencontainers.image.revision"] == $rev' >/dev/null
+# BuildKit caps mtimes at SOURCE_DATE_EPOCH but can retain older cache mtimes.
+# The scratch filesystem should have the same timestamps on warm and cold builds.
+layer=$(blob "$manifest" | jq -er '.layers | select(length == 1) | .[0].digest')
+blob "$layer" | LC_ALL=C TZ=UTC tar --full-time -tzvf - |
+    awk '$4 != "1970-01-01" || $5 != "00:00:00" { failed = 1 }
+         END { exit (NR == 0 || failed) }'
 jq -n --arg commit "$revision" --arg manifest "$manifest" --arg config "$config" \
     --arg index "$index" \
     '{commit:$commit,platform:"linux/amd64",index_digest:$index,manifest_digest:$manifest,config_digest:$config}' >"$output/release.json"
