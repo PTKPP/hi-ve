@@ -9,6 +9,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+
+	"hi-ve/backend/internal/realtime"
 )
 
 func feedPosition(raw string) (int64, bool) {
@@ -91,24 +93,48 @@ func (a API) realtimeSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.CloseNow()
-	ctx := conn.CloseRead(r.Context())
+	streamRealtime(r.Context(), conn, a.RealtimeDrain, feed, func(ctx context.Context, after int64) (realtime.Feed, error) {
+		return a.Realtime.Feed(ctx, tenant, secret, after)
+	})
+}
+
+func streamRealtime(ctx context.Context, conn *websocket.Conn, drain <-chan struct{}, feed realtime.Feed,
+	fetch func(context.Context, int64) (realtime.Feed, error)) {
+	ctx = conn.CloseRead(ctx)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
+		select {
+		case <-drain:
+			_ = conn.Close(websocket.StatusGoingAway, "server restarting")
+			return
+		default:
+		}
 		write, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err = wsjson.Write(write, conn, feed)
+		err := wsjson.Write(write, conn, feed)
 		cancel()
 		if err != nil {
 			return
 		}
-		after, _ = feedPosition(feed.Cursor)
+		after, _ := feedPosition(feed.Cursor)
 		select {
+		case <-drain:
+			_ = conn.Close(websocket.StatusGoingAway, "server restarting")
+			return
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		feed, err = a.Realtime.Feed(ctx, tenant, secret, after)
+		read, cancel := context.WithTimeout(ctx, 5*time.Second)
+		feed, err = fetch(read, after)
+		cancel()
 		if err != nil {
+			select {
+			case <-drain:
+				_ = conn.Close(websocket.StatusGoingAway, "server restarting")
+				return
+			default:
+			}
 			_ = conn.Close(websocket.StatusPolicyViolation, "subscription unavailable")
 			return
 		}

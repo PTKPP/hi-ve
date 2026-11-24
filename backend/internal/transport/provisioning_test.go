@@ -168,8 +168,31 @@ func disposableDatabase(t *testing.T) *pgxpool.Pool {
 	return db
 }
 
+// Service calls use a distinct login. Fixture setup and fault injection stay on
+// the marked loopback database returned by disposableDatabase.
+func businessRuntime(t *testing.T, fixture *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	if os.Getenv("HIVE_TEST_RUNTIME_ROLE") != "hive_app" {
+		return fixture
+	}
+	cfg := fixture.Config()
+	cfg.ConnConfig.User = "hive_app"
+	cfg.ConnConfig.Password = "fixture_runtime_only"
+	db, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	var role string
+	if err := db.QueryRow(t.Context(), "SELECT current_user").Scan(&role); err != nil || role != "hive_app" {
+		t.Fatal("restricted runtime login required")
+	}
+	return db
+}
+
 func TestProvisioningPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	var err error
 	exec := func(sql string, args ...any) {
 		t.Helper()
@@ -187,7 +210,7 @@ func TestProvisioningPostgres(t *testing.T) {
 	google, token := signedProvider(t)
 	var delivery provisioning.Delivery
 	var mu sync.Mutex
-	handler := API{Provisioning: provisioning.Service{DB: db, FingerprintKey: bytes.Repeat([]byte{2}, 32)}, Identity: identity.Store{DB: db},
+	handler := API{Provisioning: provisioning.Service{DB: runtimeDB, FingerprintKey: bytes.Repeat([]byte{2}, 32)}, Identity: identity.Store{DB: runtimeDB},
 		Google: google, AdminOrigin: adminOrigin, AppOrigin: appOrigin, Deliver: func(_ context.Context, d provisioning.Delivery) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -457,7 +480,7 @@ func TestProvisioningPostgres(t *testing.T) {
 		check(request("GET", appSession, appOrigin, "", nil, &http.Cookie{Name: tenantCookie, Value: "expired-tenant-fixture"}), 401)
 		check(request("POST", create, adminOrigin, "first-create-key", input,
 			&http.Cookie{Name: platformCookie, Value: "expired-platform-fixture"}), 401)
-		store := identity.Store{DB: db}
+		store := identity.Store{DB: runtimeDB}
 		for i := 0; i < 2; i++ {
 			if err := store.RemoveExpiredAuthState(t.Context()); err != nil {
 				t.Fatal(err)

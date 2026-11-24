@@ -34,6 +34,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
+		os.Exit(probeCLI())
+	}
+	if os.Getenv("HIVE_RUNTIME") == "staging" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx); err != nil {
@@ -43,6 +49,10 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	staging, err := runtimeMode()
+	if err != nil {
+		return err
+	}
 	dsn := os.Getenv("HIVE_DATABASE_URL")
 	key, err := hex.DecodeString(os.Getenv("HIVE_RECEIPT_HMAC_KEY"))
 	codeKey, codeErr := hex.DecodeString(os.Getenv("HIVE_DEVICE_PAIRING_CODE_KEY"))
@@ -63,7 +73,11 @@ func run(ctx context.Context) error {
 	}
 	start, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	db, err := pgxpool.New(start, dsn)
+	pool, err := poolConfig(dsn, staging, os.Getenv("HIVE_DB_MAX_CONNECTIONS"))
+	if err != nil {
+		return err
+	}
+	db, err := pgxpool.NewWithConfig(start, pool)
 	if err != nil {
 		return errors.New("invalid database configuration")
 	}
@@ -71,9 +85,13 @@ func run(ctx context.Context) error {
 	if db.Ping(start) != nil {
 		return errors.New("database unavailable")
 	}
-	var version int
-	if err = db.QueryRow(start, `SELECT version FROM public.hive_schema_version`).Scan(&version); err != nil || version < 28 {
-		return errors.New("required backend migrations are missing")
+	minimum := 28
+	if staging {
+		minimum = stagingSchema
+	}
+	version, err := schemaVersion(start, db, minimum)
+	if err != nil {
+		return err
 	}
 	google, err := identity.NewGoogle(start, clientID, clientSecret, redirect)
 	if err != nil {
@@ -127,17 +145,19 @@ func run(ctx context.Context) error {
 	if address == "" {
 		address = "127.0.0.1:8080"
 	}
-	handler := api.Handler()
-	server := &http.Server{Addr: address, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		timeout := 20 * time.Second
-		if r.Header.Get("Upgrade") == "websocket" && strings.HasSuffix(r.URL.Path, "/realtime/socket") {
-			timeout = 10 * time.Minute
-		}
-		request, cancel := context.WithTimeout(r.Context(), timeout)
-		defer cancel()
-		handler.ServeHTTP(w, r.WithContext(request))
-	}), ReadHeaderTimeout: 5 * time.Second,
+	runtime := &runtimeHTTP{draining: make(chan struct{}), probe: func(ctx context.Context) bool {
+		current, err := schemaVersion(ctx, db, minimum)
+		return err == nil && current == version
+	}}
+	api.RealtimeDrain = runtime.draining
+	server := &http.Server{Handler: runtime.handler(api.Handler()), ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 10 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return errors.New("HTTP listener failed")
+	}
+	defer listener.Close()
+	cancel()
 	cleanupCtx, stopCleanup := context.WithCancel(ctx)
 	cleanupDone := make(chan struct{})
 	go func() {
@@ -150,6 +170,9 @@ func run(ctx context.Context) error {
 			case <-cleanupCtx.Done():
 				return
 			case <-ticker.C:
+				if staging {
+					runtime.logMetrics(db)
+				}
 				backlog, err := api.LoginHistory.Cleanup(cleanupCtx)
 				if err != nil && cleanupCtx.Err() == nil {
 					slog.Warn("online login history cleanup failed")
@@ -204,16 +227,7 @@ func run(ctx context.Context) error {
 		stopCleanup()
 		<-cleanupDone
 	}()
-	failed := make(chan error, 1)
-	go func() { failed <- server.ListenAndServe() }()
-	select {
-	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		return server.Shutdown(shutdown)
-	case <-failed:
-		return errors.New("HTTP listener failed")
-	}
+	return runtime.serve(ctx, listener, server)
 }
 
 func validOrigin(raw string) bool {

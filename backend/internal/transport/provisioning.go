@@ -52,6 +52,7 @@ type API struct {
 	Global                 settings.Global
 	PushSchema             bool
 	Realtime               realtime.Service
+	RealtimeDrain          <-chan struct{}
 	Reports                reports.Service
 	Offline                offline.Service
 	SalesDB                *pgxpool.Pool

@@ -436,5 +436,8 @@ expect_sql hive_online_upgrade "SELECT count(*) FROM hive.tenant_sessions WHERE 
 printf 'PASS: fresh and upgrade through 029 remove the old FK and preserve Owner anchors and sessions\n'
 
 sql hive_test 'CREATE TABLE public.hive_disposable_test ()'
+sql hive_test "CREATE ROLE hive_app LOGIN PASSWORD 'fixture_runtime_only'"
+docker_local exec -i "$container" psql -Xq -v ON_ERROR_STOP=1 -U postgres -d hive_test < deploy/staging/postgres/runtime-grants.sql
+HIVE_TEST_RUNTIME_ROLE=hive_app \
 HIVE_DISPOSABLE_TEST_DATABASE="postgres://postgres:hive_disposable_test@$port/hive_test?sslmode=disable&connect_timeout=5" \
     go test -race -count=1 ./internal/transport -run '^Test(Provisioning|TenantRBAC|Entitlement|Membership|Locations|Logout|Devices|LoginHistory|LocationGrants|OperationalContext|StaffPIN|OperatorPIN|Inventory|Sales|Reports|PlatformControls|Catalog|ReceiptSettings|AccessControlAudit)Postgres$'

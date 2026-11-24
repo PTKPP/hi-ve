@@ -18,6 +18,7 @@ import (
 
 func TestSalesPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, owner, _ := ownerSessionFixture(t, db, "sales-owner")
 	foreign, foreignActor, _ := ownerSessionFixture(t, db, "sales-foreign")
@@ -44,7 +45,7 @@ func TestSalesPostgres(t *testing.T) {
 	ownerScope := sales.Scope{Tenant: tenant, Actor: owner, Outlet: outlet}
 	staffScope := sales.Scope{Tenant: tenant, Actor: staff, Outlet: outlet}
 	deny := errors.New("scope denied")
-	run := func(fn func(pgx.Tx) error) error { return pgx.BeginFunc(ctx, db, fn) }
+	run := func(fn func(pgx.Tx) error) error { return pgx.BeginFunc(ctx, runtimeDB, fn) }
 	allow := func(_ context.Context, _ pgx.Tx, scope sales.Scope, _ string) error {
 		if scope.Tenant != tenant || scope.Outlet != outlet || scope.Actor != owner && scope.Actor != staff {
 			return deny
@@ -272,7 +273,7 @@ func TestSalesPostgres(t *testing.T) {
 		}
 		return nil
 	}))
-	_, err = db.Exec(ctx, `UPDATE hive.sales_orders SET total=0 WHERE tenant_id=$1`, tenant)
+	_, err = runtimeDB.Exec(ctx, `UPDATE hive.sales_orders SET total=0 WHERE tenant_id=$1`, tenant)
 	var pgerr *pgconn.PgError
 	if !errors.As(err, &pgerr) || pgerr.Code != "42501" {
 		t.Fatal(err)

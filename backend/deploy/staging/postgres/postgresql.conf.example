@@ -1,0 +1,12 @@
+# Include after creating private DNS, installing the server cert/key and preparing the WAL archive.
+listen_addresses = '127.0.0.1,192.0.2.20'
+ssl = on
+ssl_cert_file = '/etc/postgresql/tls/staging-server.crt'
+ssl_key_file = '/etc/postgresql/tls/staging-server.key'
+ssl_min_protocol_version = 'TLSv1.2'
+password_encryption = 'scram-sha-256'
+wal_level = replica
+archive_mode = on
+archive_timeout = '60s'
+# Use the approved archive program. Success means the segment is durably stored off-VM.
+archive_command = '/usr/local/libexec/hive-wal-archive "%p" "%f"'
