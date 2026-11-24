@@ -34,6 +34,7 @@ import (
 
 func TestOperatorPINPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, ownerID, owner := ownerSessionFixture(t, db, "operator-pin-owner")
 	foreignTenant, _, foreign := ownerSessionFixture(t, db, "operator-pin-foreign")
@@ -70,25 +71,24 @@ func TestOperatorPINPostgres(t *testing.T) {
 	role := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'operator','Operator') RETURNING id`, tenant)
 	exec(`INSERT INTO hive.tenant_role_location_actions VALUES ($1,$2,'devices.operators.use')`, tenant, role)
 	key := bytes.Repeat([]byte{4}, 32)
-	svc := devices.Service{DB: db, CatalogCommands: true, InventoryCommands: true, SalesCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
+	svc := devices.Service{DB: runtimeDB, CatalogCommands: true, InventoryCommands: true, SalesCommands: true, RateKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner, AuthorizeOperator: identity.AuthorizeDeviceOperator,
 		LockOutlets: locations.LockActiveOutlets, PINContextSchema: true, TenantEpochSchema: true}
 	newPIN := func() *identity.PIN {
-		pin, err := identity.NewPIN(db, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
+		pin, err := identity.NewPIN(runtimeDB, key, 1, bytes.Repeat([]byte{5}, 32), 0, nil, svc.EndMemberContexts)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return pin
 	}
 	svc.PIN = newPIN()
-	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: db, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
+	app := API{Devices: svc, StaffPIN: svc.PIN, AppOrigin: appOrigin, LoginHistory: audit.LoginHistory{DB: runtimeDB, CursorKey: key, AuthorizeOwner: identity.AuthorizeTenantOwner}}
 	app.AdminOrigin = adminOrigin
-	app.InventoryDB = db
-	app.SalesDB = db
-	app.Entitlements = entitlements.Service{DB: db, FingerprintKey: key}
-	app.Catalog = catalog.Service{DB: db, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
-	deployedHandler := app.Handler()
-	app.Offline = offline.New(db, svc, app.Entitlements, app.Catalog, key)
-	app.Memberships = identity.MembershipLifecycle{DB: db, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
+	app.InventoryDB = runtimeDB
+	app.SalesDB = runtimeDB
+	app.Entitlements = entitlements.Service{DB: runtimeDB, FingerprintKey: key}
+	app.Catalog = catalog.Service{DB: runtimeDB, LockOutlets: locations.LockActiveOutlets, AuthorizeOwner: identity.AuthorizeTenantOwner, CheckCapability: app.Entitlements.CheckWrite}
+
+	app.Memberships = identity.MembershipLifecycle{DB: runtimeDB, FingerprintKey: key, StaffPINSchema: true, RemoveOperatorAccess: svc.RemoveOperatorAccess}
 	handler := app.Handler()
 	replica := app
 	replica.Devices.PIN = newPIN()
@@ -371,7 +371,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	reason := map[string]string{"reason": "checked adjustment"}
 	expectStatus(t, inventoryCall("POST", inventoryPath+adjustmentID+"/approve", reason), 403)
 	approvalRole := id(`INSERT INTO hive.tenant_roles(tenant_id,role_key,name) VALUES($1,'inventory-approver','Inventory approver') RETURNING id`, tenant)
-	rbac := identity.RBAC{DB: db, FingerprintKey: key, InventoryActions: true, LockOutlets: locations.LockActiveOutlets,
+	rbac := identity.RBAC{DB: runtimeDB, FingerprintKey: key, InventoryActions: true, LockOutlets: locations.LockActiveOutlets,
 		LockInventoryLocations: locations.LockActiveInventoryLocations}
 	grantRevision := int64(0)
 	actions, err := rbac.LocationActions(ctx, tenant, owner.Value, approvalRole, "inventory-actions-grant", &grantRevision,
@@ -511,6 +511,14 @@ func TestOperatorPINPostgres(t *testing.T) {
 	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, owner), 200)
 	expectStatus(t, accessRequest(handler, "POST", ownerReturnPath, appOrigin, "", reason, foreign), 401)
 	t.Run("offline journal", func(t *testing.T) {
+		// This separate composition exercises the deferred Offline rollout.
+		// Its commands share the fixture transaction when touching Offline tables.
+		deployedHandler := handler
+		offlineApp := app
+		offlineApp.Devices.DB = db
+		offlineApp.Offline = offline.New(db, offlineApp.Devices, app.Entitlements, app.Catalog, key)
+		handler = offlineApp.Handler()
+		defer func() { handler = deployedHandler }()
 		offlinePath := base(device) + "/offline"
 		ownerPath := "/api/v1/app/tenants/" + tenant + "/offline"
 		rev := previous.Revision
@@ -809,7 +817,7 @@ func TestOperatorPINPostgres(t *testing.T) {
 	if err := json.Unmarshal(fresh.Body.Bytes(), &active); err != nil {
 		t.Fatal(err)
 	}
-	loc := locations.Service{DB: db, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: func(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
+	loc := locations.Service{DB: runtimeDB, AuthorizeOwner: identity.AuthorizeTenantOwner, EndOutletContexts: func(ctx context.Context, tx pgx.Tx, tenant, outlet string) error {
 		// A heap scan encounters the two fixtures in insertion order.
 		if _, err := tx.Exec(ctx, `SET LOCAL enable_indexscan=off; SET LOCAL enable_bitmapscan=off`); err != nil {
 			return err

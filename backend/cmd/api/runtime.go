@@ -25,7 +25,7 @@ func poolConfig(dsn string, staging bool, maxConnections string) (*pgxpool.Confi
 	if staging {
 		u, err := url.Parse(dsn)
 		if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") ||
-			u.Hostname() == "" || strings.ContainsAny(u.Hostname(), ",/") {
+			u.User.Username() != "hive_app" || u.Hostname() == "" || strings.ContainsAny(u.Hostname(), ",/") {
 			return nil, invalid
 		}
 		host = u.Hostname()

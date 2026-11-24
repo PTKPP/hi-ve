@@ -20,6 +20,7 @@ import (
 
 func TestLoginHistoryPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, owner, old := ownerSessionFixture(t, db, "history-owner")
 	other, otherOwner, foreign := ownerSessionFixture(t, db, "history-other")
@@ -57,8 +58,8 @@ func TestLoginHistoryPostgres(t *testing.T) {
 	legacy := &http.Cookie{Name: tenantCookie, Value: "history-legacy-staff"}
 
 	google, signed := signedProvider(t)
-	history := audit.LoginHistory{DB: db, CursorKey: bytes.Repeat([]byte{2}, 32), AuthorizeOwner: identity.AuthorizeTenantOwner}
-	h := API{LoginHistory: history, Google: google, Identity: identity.Store{DB: db}, TenantRBAC: identity.RBAC{DB: db},
+	history := audit.LoginHistory{DB: runtimeDB, CursorKey: bytes.Repeat([]byte{2}, 32), AuthorizeOwner: identity.AuthorizeTenantOwner}
+	h := API{LoginHistory: history, Google: google, Identity: identity.Store{DB: runtimeDB}, TenantRBAC: identity.RBAC{DB: runtimeDB},
 		AdminOrigin: adminOrigin, AppOrigin: appOrigin}.Handler()
 	based := func(id string) string { return "/api/v1/app/tenants/" + id }
 	call := func(method, path, origin string, cookies ...*http.Cookie) *httptest.ResponseRecorder {

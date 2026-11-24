@@ -251,4 +251,27 @@ GRANT UPDATE (active) ON hive.platform_principals TO hive_app;
 GRANT UPDATE (digest) ON hive.platform_sessions, hive.tenant_sessions TO hive_app;
 GRANT UPDATE (role_id) ON hive.tenant_role_assignments TO hive_app;
 GRANT UPDATE (action) ON hive.tenant_role_actions TO hive_app;
+-- FOR SHARE and FOR UPDATE require a column UPDATE grant even for
+-- read-only authorization rows. Prevent that grant from changing data.
+-- Google provisioning uses a no-op upsert to return the existing identity.
+CREATE OR REPLACE FUNCTION hive.staging_guard_lock_only_update() RETURNS trigger
+LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+    RAISE EXCEPTION 'runtime column is for row locking only' USING ERRCODE='42501';
+END $$;
+DO $$
+DECLARE relation text;
+BEGIN
+    FOREACH relation IN ARRAY ARRAY[
+        'platform_permissions','platform_principals','google_principals',
+        'tenant_sessions','platform_sessions','oidc_flows',
+        'device_operation_challenges','device_bootstrap_receipts',
+        'online_login_history','operator_login_history',
+        'tenant_role_actions','tenant_role_assignments'
+    ] LOOP
+        EXECUTE format('CREATE OR REPLACE TRIGGER staging_lock_only BEFORE UPDATE ON hive.%I
+            FOR EACH ROW WHEN (current_user = %L AND OLD.* IS DISTINCT FROM NEW.*)
+            EXECUTE FUNCTION hive.staging_guard_lock_only_update()', relation, 'hive_app');
+    END LOOP;
+END $$;
 COMMIT;

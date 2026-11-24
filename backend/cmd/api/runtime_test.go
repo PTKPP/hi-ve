@@ -38,7 +38,7 @@ func TestStagingPoolConfig(t *testing.T) {
 	}
 	for _, dsn := range []string{
 		base, base + "?sslmode=require", base + "?sslmode=prefer", base + "?sslmode=verify-full",
-		full + "&sslmode=disable", full + "&host=localhost", full + "&service=fixture",
+		strings.Replace(full, "hive_app", "hive_migrator", 1), full + "&sslmode=disable", full + "&host=localhost", full + "&service=fixture",
 		strings.Replace(full, "pg.example.invalid", "pg.example.invalid,other.example.invalid", 1),
 		strings.Replace(full, url.QueryEscape(ca), "/missing.pem", 1),
 	} {

@@ -1,4 +1,8 @@
 BEGIN;
+INSERT INTO hive.google_principals(issuer,subject) VALUES ('https://accounts.google.com','fixture-platform-admin');
+INSERT INTO hive.platform_principals(principal_id)
+SELECT id FROM hive.google_principals WHERE subject='fixture-platform-admin';
+INSERT INTO hive.platform_permissions SELECT principal_id,'platform.tenants.read' FROM hive.platform_principals;
 SET LOCAL ROLE hive_app;
 DO $$
 DECLARE
@@ -40,6 +44,30 @@ BEGIN
         RAISE EXCEPTION 'Runtime role can rewrite audit';
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
+    BEGIN
+        UPDATE hive.platform_permissions SET permission='platform.tenants.provision';
+        RAISE EXCEPTION 'Platform grant writable';
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+        UPDATE hive.platform_principals SET active=false;
+        RAISE EXCEPTION 'Platform activation writable';
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+        UPDATE hive.google_principals SET subject='changed' WHERE subject='fixture-platform-admin';
+        RAISE EXCEPTION 'Google principal mutable';
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+        DELETE FROM hive.tenant_administration_audit;
+        RAISE EXCEPTION 'Runtime can delete critical audit';
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    IF pg_has_role(current_user,'hive_migrator','MEMBER') OR
+       pg_has_role(current_user,'hive_backup','MEMBER') THEN
+        RAISE EXCEPTION 'Runtime inherits privileged role';
+    END IF;
     IF has_function_privilege(current_user,'hive.purge_critical_audit(text,integer,boolean)','EXECUTE') OR
        has_table_privilege(current_user,'hive.offline_leases','SELECT,INSERT,UPDATE,DELETE') THEN
         RAISE EXCEPTION 'Runtime has Offline or purge privileges';

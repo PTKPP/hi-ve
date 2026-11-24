@@ -25,6 +25,7 @@ import (
 
 func TestPlatformControlsPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, owner, session := ownerSessionFixture(t, db, "control-owner")
 	_, candidate, _ := ownerSessionFixture(t, db, "control-candidate")
@@ -52,9 +53,9 @@ func TestPlatformControlsPostgres(t *testing.T) {
 		sent.Add(1)
 		return 201, nil
 	}}
-	rt := realtime.Service{DB: db, Entitlements: entitlements.Service{DB: db}, Push: push}
-	a := API{AdminOrigin: adminOrigin, AppOrigin: appOrigin, Global: settings.Global{DB: db}, PushSchema: true, Provisioning: provisioning.Service{DB: db},
-		Identity: identity.Store{DB: db}, Devices: devices.Service{DB: db, TenantEpochSchema: true}, Realtime: rt}
+	rt := realtime.Service{DB: runtimeDB, Entitlements: entitlements.Service{DB: runtimeDB}, Push: push}
+	a := API{AdminOrigin: adminOrigin, AppOrigin: appOrigin, Global: settings.Global{DB: runtimeDB}, PushSchema: true, Provisioning: provisioning.Service{DB: runtimeDB},
+		Identity: identity.Store{DB: runtimeDB}, Devices: devices.Service{DB: runtimeDB, TenantEpochSchema: true}, Realtime: rt}
 	h := a.Handler()
 	const settingsPath = "/api/v1/admin/settings/notifications.web_push_enabled"
 	preEpoch := a

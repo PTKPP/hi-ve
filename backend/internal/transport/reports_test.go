@@ -21,6 +21,7 @@ import (
 
 func TestReportsPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, owner, session := ownerSessionFixture(t, db, "reports-owner")
 	foreign, foreignActor, foreignSession := ownerSessionFixture(t, db, "reports-foreign")
@@ -40,9 +41,9 @@ func TestReportsPostgres(t *testing.T) {
 	exec := func(q string, args ...any) { t.Helper(); _, err := db.Exec(ctx, q, args...); must(err) }
 	caps := []string{"reports.dashboard", "reports.sales", "reports.inventory", "reports.stock_movements", "realtime.events", "realtime.notifications"}
 	exec(`INSERT INTO hive.tenant_entitlements SELECT $1,cap,now()-interval '1 day',now()+interval '1 day','test',NULL,1 FROM unnest($2::text[]) cap`, tenant, caps)
-	p := entitlements.Service{DB: db}
-	a := API{AppOrigin: appOrigin, AdminOrigin: adminOrigin, Reports: reports.Service{DB: db, Entitlements: p},
-		Realtime: realtime.Service{DB: db, Entitlements: p}, Provisioning: provisioning.Service{DB: db}}
+	p := entitlements.Service{DB: runtimeDB}
+	a := API{AppOrigin: appOrigin, AdminOrigin: adminOrigin, Reports: reports.Service{DB: runtimeDB, Entitlements: p},
+		Realtime: realtime.Service{DB: runtimeDB, Entitlements: p}, Provisioning: provisioning.Service{DB: runtimeDB}}
 	h := a.Handler()
 	api := func(method, path string, in any, cookie *http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()

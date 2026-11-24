@@ -66,11 +66,25 @@ sql hive_staging <scripts/fixtures/staging-role-smoke.sql
 docker_local exec -u postgres -e PGPASSWORD=fixture_backup_password "$container" \
     pg_basebackup -d 'host=127.0.0.1 user=hive_backup sslmode=verify-full sslrootcert=/var/lib/postgresql/tls/server.crt' \
     -D /var/lib/postgresql/pitr -X stream --checkpoint=fast
+docker_local exec -u postgres "$container" pg_verifybackup /var/lib/postgresql/pitr
+# Force the next segment to stay on the primary. Verify observable failure,
+# then restore the archive directory and require recovery to cross that gap.
+failed_before=$(sql -c 'SELECT failed_count FROM pg_stat_archiver')
+docker_local exec "$container" chmod 0500 /var/lib/postgresql/wal
 sql hive_staging -c 'INSERT INTO public.staging_disposable_marker VALUES (1)'
 segment=$(sql -c "SELECT pg_walfile_name(pg_create_restore_point('hive_staging_rehearsal'))")
 sql hive_staging -c 'INSERT INTO public.staging_disposable_marker VALUES (2)'
 sql -c 'SELECT pg_switch_wal()'
-for ((attempt=0; attempt<40; attempt++)); do
+for ((attempt=0; attempt<60; attempt++)); do
+    failed_now=$(sql -c 'SELECT failed_count FROM pg_stat_archiver')
+    if (( failed_now > failed_before )); then break; fi
+    sleep 1
+done
+(( failed_now > failed_before ))
+docker_local exec "$container" test ! -e "/var/lib/postgresql/wal/$segment"
+docker_local exec "$container" chmod 0700 /var/lib/postgresql/wal
+sql -c 'SELECT pg_switch_wal()'
+for ((attempt=0; attempt<90; attempt++)); do
     if docker_local exec "$container" test -s "/var/lib/postgresql/wal/$segment"; then break; fi
     sleep 1
 done

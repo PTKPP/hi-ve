@@ -22,6 +22,7 @@ import (
 
 func TestDevicesPostgres(t *testing.T) {
 	db := disposableDatabase(t)
+	runtimeDB := businessRuntime(t, db)
 	ctx := t.Context()
 	tenant, owner, own := ownerSessionFixture(t, db, "pairing-owner")
 	foreign, _, other := ownerSessionFixture(t, db, "pairing-foreign")
@@ -45,7 +46,7 @@ func TestDevicesPostgres(t *testing.T) {
 	two := location(tenant, "second", "outlet")
 	wrongTenant := location(foreign, "outlet", "outlet")
 	warehouse := location(tenant, "warehouse", "warehouse")
-	service := devices.Service{DB: db, CodeKey: bytes.Repeat([]byte{7}, 32), RateKey: bytes.Repeat([]byte{8}, 32),
+	service := devices.Service{DB: runtimeDB, CodeKey: bytes.Repeat([]byte{7}, 32), RateKey: bytes.Repeat([]byte{8}, 32),
 		AuthorizeOwner: identity.AuthorizeTenantOwner, LockOutlets: locations.LockActiveOutlets, TenantEpochSchema: true}
 	handler := API{Devices: service, AppOrigin: appOrigin, AdminOrigin: adminOrigin}.Handler()
 	const startPath = "/api/v1/devices/pairings"
